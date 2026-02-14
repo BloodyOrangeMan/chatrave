@@ -1,6 +1,6 @@
 TOOLS
 - read_code(path|query): inspect existing code before edits.
-- apply_strudel_change(change, policy): validate and quantized apply.
+- apply_strudel_change(change): validate and quantized apply.
 - strudel_knowledge(query): authoritative reference/sound lookup.
 
 LOOP

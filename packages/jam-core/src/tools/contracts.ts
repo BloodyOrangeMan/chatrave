@@ -29,9 +29,6 @@ export interface ApplyStrudelChangeInput {
     kind: 'patch' | 'full_code';
     content: string;
   };
-  policy?: {
-    quantize: 'next_cycle' | 'next_bar';
-  };
 }
 
 export interface StrudelKnowledgeInput {

@@ -79,7 +79,6 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
 
   const applyStrudelChange = async (input: {
     change: { kind: 'patch' | 'full_code'; content: string };
-    policy?: { quantize: 'next_cycle' | 'next_bar' };
   }): Promise<{ status: 'scheduled' | 'applied'; applyAt?: string }> => {
     const editor = hostContext?.editorRef?.current;
     if (!editor) {
@@ -93,7 +92,7 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
 
     const cps = editor.repl?.scheduler?.cps ?? 0.5;
     const cycleMs = Math.max(250, Math.round((1 / Math.max(0.1, cps)) * 1000));
-    const delayMs = input.policy?.quantize === 'next_bar' ? cycleMs * 2 : cycleMs;
+    const delayMs = cycleMs;
     const applyAt = new Date(Date.now() + delayMs).toISOString();
 
     setTimeout(() => {

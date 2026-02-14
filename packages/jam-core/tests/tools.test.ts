@@ -12,7 +12,6 @@ describe('tool dispatcher', () => {
         currentCode,
         baseHash: hashString(currentCode),
         change: { kind: 'patch', content: 's("hh")' },
-        policy: { quantize: 'next_cycle' },
       },
     });
 
@@ -28,7 +27,6 @@ describe('tool dispatcher', () => {
         currentCode: 's("bd")',
         baseHash: 'fnv1a-deadbeef',
         change: { kind: 'patch', content: 's("hh")' },
-        policy: { quantize: 'next_cycle' },
       },
     });
 

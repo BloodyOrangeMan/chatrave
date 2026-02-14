@@ -157,7 +157,9 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
         throw new Error(`Unresolved prompt placeholders: ${prompt.unresolvedPlaceholders.join(', ')}`);
       }
 
-      const contextualUserText = omitRuntimeContext
+      const skipRuntimeContextThisTurn = omitRuntimeContext;
+      omitRuntimeContext = false;
+      const contextualUserText = skipRuntimeContextThisTurn
         ? `User request:\n${text}`
         : `[runtime_context]\n${JSON.stringify(makeContextEnvelope(config))}\n[/runtime_context]\n\nUser request:\n${text}`;
 
@@ -323,7 +325,6 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
                 currentCode: current.code,
                 baseHash: current.hash,
                 change: { kind: 'full_code', content: generatedCode },
-                policy: { quantize: 'next_cycle' },
               },
             },
             {

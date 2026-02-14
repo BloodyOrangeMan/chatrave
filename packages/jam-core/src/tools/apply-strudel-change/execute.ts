@@ -31,6 +31,6 @@ export async function executeApplyStrudelChange(
     }
   }
 
-  const schedule = scheduleApply(input.policy?.quantize ?? 'next_cycle');
+  const schedule = scheduleApply('next_cycle');
   return toApplyScheduled(schedule.applyAt);
 }
