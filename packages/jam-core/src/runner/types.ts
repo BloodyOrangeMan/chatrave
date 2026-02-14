@@ -9,5 +9,7 @@ export interface AgentRunner {
 
 export interface AgentRunnerConfig {
   settings: AgentSettings;
+  maxRepairAttempts?: number;
+  globalToolBudget?: number;
   now?: () => number;
 }

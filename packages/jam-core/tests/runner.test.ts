@@ -18,15 +18,13 @@ function mockFetchResponse(parts: string[]): Response {
 
 describe('agent runner', () => {
   it('emits delta then completion in order', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        mockFetchResponse([
-          'data: {"choices":[{"delta":{"content":"a"}}]}\n\n',
-          'data: [DONE]\n\n',
-        ]),
-      ),
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockFetchResponse([
+        'data: {"choices":[{"delta":{"content":"a"}}]}\n\n',
+        'data: [DONE]\n\n',
+      ]),
     );
+    vi.stubGlobal('fetch', fetchMock);
 
     const runner = createAgentRunner({
       settings: {
@@ -48,5 +46,10 @@ describe('agent runner', () => {
 
     expect(events).toContain('assistant.stream.delta');
     expect(events).toContain('assistant.turn.completed');
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(body.messages[0].role).toBe('system');
+    expect(body.messages[1].role).toBe('user');
   });
 });

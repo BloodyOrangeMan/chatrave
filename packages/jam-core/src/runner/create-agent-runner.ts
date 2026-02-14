@@ -1,5 +1,6 @@
 import type { RunnerEvent } from '@chatrave/shared-types';
 import { openRouterStream } from '../llm/openrouter/client';
+import { buildSystemPrompt } from '../prompts/loader';
 import { parseOpenRouterSse } from '../llm/openrouter/stream';
 import { mapModeToEffort } from './model-profile';
 import type { AgentRunner, AgentRunnerConfig } from './types';
@@ -36,6 +37,16 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
     let fullText = '';
 
     try {
+      const prompt = buildSystemPrompt({
+        vars: {
+          MAX_REPAIR_ATTEMPTS: String(config.maxRepairAttempts ?? 4),
+          GLOBAL_TOOL_BUDGET: String(config.globalToolBudget ?? 20),
+        },
+      });
+      if (prompt.unresolvedPlaceholders.length > 0) {
+        throw new Error(`Unresolved prompt placeholders: ${prompt.unresolvedPlaceholders.join(', ')}`);
+      }
+
       const response = await openRouterStream(
         {
           apiKey: config.settings.apiKey,
@@ -44,7 +55,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
           reasoningEnabled: config.settings.reasoningEnabled,
           reasoningEffort: mapModeToEffort(config.settings.reasoningMode),
         },
-        { userText: text, signal: abortController.signal },
+        { userText: text, systemPrompt: prompt.prompt, signal: abortController.signal },
       );
 
       for await (const chunk of parseOpenRouterSse(response.body!)) {

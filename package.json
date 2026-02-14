@@ -8,9 +8,11 @@
     "test": "pnpm -r --filter './packages/*' --filter './apps/*' run test",
     "check:strudel-boundary": "bash tools/check-strudel-boundary.sh",
     "check:secrets": "bash tools/check-secrets.sh",
-    "ci": "pnpm run check:strudel-boundary && pnpm run check:secrets && pnpm run typecheck && pnpm run test"
+    "check:prompt-placeholders": "node tools/check-prompt-placeholders.mjs",
+    "ci": "pnpm run check:strudel-boundary && pnpm run check:secrets && pnpm run check:prompt-placeholders && pnpm run typecheck && pnpm run test"
   },
   "devDependencies": {
+    "@types/node": "^22.13.8",
     "jsdom": "^26.0.0",
     "typescript": "^5.7.3",
     "vitest": "^3.2.4"

@@ -12,6 +12,7 @@ export interface OpenRouterClientConfig {
 
 export interface OpenRouterStreamRequest {
   userText: string;
+  systemPrompt?: string;
   signal?: AbortSignal;
 }
 
@@ -24,7 +25,10 @@ export async function openRouterStream(
     model: config.model,
     stream: true,
     temperature: config.temperature,
-    messages: [{ role: 'user', content: request.userText }],
+    messages: [
+      ...(request.systemPrompt ? [{ role: 'system', content: request.systemPrompt }] : []),
+      { role: 'user', content: request.userText },
+    ],
     reasoning: config.reasoningEnabled ? { effort: config.reasoningEffort } : undefined,
   };
 
