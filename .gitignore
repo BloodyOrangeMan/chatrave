@@ -37,8 +37,6 @@ Thumbs.db
 .strudel/cache/
 coverage/
 
-# Strudel submodule (separate git repo)
-strudel/
 
 # Temporary files
 *.tmp
