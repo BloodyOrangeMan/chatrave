@@ -17,6 +17,32 @@ export interface OpenRouterStreamRequest {
   signal?: AbortSignal;
 }
 
+function logOpenRouterRequest(url: string, headers: Record<string, string>, body: Record<string, unknown>): void {
+  try {
+    console.info('[chatrave][llm] request', {
+      method: 'POST',
+      url,
+      headers,
+      body,
+      serializedBody: JSON.stringify(body),
+    });
+  } catch {
+    // Ignore logging failures.
+  }
+}
+
+function logOpenRouterResponse(url: string, response: Response): void {
+  try {
+    console.info('[chatrave][llm] response', {
+      url,
+      status: response.status,
+      ok: response.ok,
+    });
+  } catch {
+    // Ignore logging failures.
+  }
+}
+
 function buildBody(config: OpenRouterClientConfig, request: OpenRouterStreamRequest, stream: boolean): Record<string, unknown> {
   return {
     model: config.model,
@@ -39,17 +65,22 @@ async function postOpenRouter(
 ): Promise<Response> {
   const url = `${config.baseUrl ?? 'https://openrouter.ai/api/v1'}/chat/completions`;
   const body = buildBody(config, request, stream);
+  const headers = {
+    'content-type': 'application/json',
+    authorization: `Bearer ${config.apiKey}`,
+  };
+
+  logOpenRouterRequest(url, headers, body);
 
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       signal: request.signal,
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${config.apiKey}`,
-      },
+      headers,
       body: JSON.stringify(body),
     });
+    logOpenRouterResponse(url, response);
+    return response;
   } catch (error) {
     throw makeOpenRouterError(
       `Network request failed: ${(error as Error).message}`,
