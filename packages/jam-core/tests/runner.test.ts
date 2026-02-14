@@ -246,4 +246,27 @@ describe('agent runner', () => {
     expect(events).toContain('apply.status.changed');
     expect(deltas.join('')).toContain('Apply status: scheduled');
   });
+
+  it('clears stored conversation context on resetContext', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockCompletionResponse('ok'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const runner = createAgentRunner({
+      settings: {
+        schemaVersion: 1,
+        provider: 'openrouter',
+        model: 'moonshotai/kimi-k2.5',
+        reasoningEnabled: true,
+        reasoningMode: 'balanced',
+        temperature: 0.2,
+        apiKey: 'k',
+      },
+      now: () => 100,
+    });
+
+    const first = await runner.sendUserMessage('hello');
+    runner.resetContext();
+
+    await expect(runner.retryMessage(first.messageId)).rejects.toThrow(/No source message stored for retry/);
+  });
 });

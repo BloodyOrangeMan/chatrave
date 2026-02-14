@@ -159,6 +159,10 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
   stop.textContent = 'Stop';
   styleButton(stop);
 
+  const clearAll = document.createElement('button');
+  clearAll.textContent = 'Clear code + convo';
+  styleButton(clearAll);
+
   const modelInput = document.createElement('input');
   modelInput.value = settings.model;
   styleControl(modelInput);
@@ -210,10 +214,32 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
 
   stop.onclick = () => worker.stop();
 
+  clearAll.onclick = () => {
+    worker.stop();
+    worker.resetContext();
+
+    composer.value = '';
+    output.textContent = 'Agent ready.';
+    savePersistedOutputText(output.textContent);
+
+    const editor = hostContext?.editorRef?.current as { code?: string; setCode?: (code: string) => void } | undefined;
+    if (editor) {
+      editor.code = '';
+      editor.setCode?.('');
+    }
+
+    try {
+      const mirror = (window as Window & { strudelMirror?: { repl?: { stop?: () => void } } }).strudelMirror;
+      mirror?.repl?.stop?.();
+    } catch {
+      // no-op
+    }
+  };
+
   const buttonRow = document.createElement('div');
   buttonRow.style.display = 'flex';
   buttonRow.style.gap = '8px';
-  buttonRow.append(send, stop);
+  buttonRow.append(send, stop, clearAll);
 
   root.append(
     output,

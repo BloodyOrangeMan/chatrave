@@ -101,7 +101,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
     signal: AbortSignal,
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   ): Promise<string> {
-    const timeoutMs = config.modelTimeoutMs ?? 45_000;
+    const timeoutMs = config.modelTimeoutMs ?? 120_000;
     const timeoutController = new AbortController();
     const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
     const abortOnParent = () => timeoutController.abort();
@@ -444,6 +444,14 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
         throw new Error(`No source message stored for retry: ${messageId}`);
       }
       return executeTurn(messageId, source);
+    },
+    resetContext() {
+      if (running) {
+        running.abortController.abort();
+        running = null;
+      }
+      completedContent.clear();
+      emit({ type: 'runner.state.changed', payload: { runningTurnId: null } });
     },
     subscribeToEvents(listener) {
       listeners.add(listener);

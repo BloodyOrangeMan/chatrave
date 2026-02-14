@@ -6,6 +6,7 @@ export interface AgentRunner {
   sendUserMessage(text: string): Promise<{ turnId: string; messageId: string }>;
   stopGeneration(turnId?: string): void;
   retryMessage(messageId: string): Promise<{ turnId: string; messageId: string }>;
+  resetContext(): void;
   subscribeToEvents(listener: (event: RunnerEvent) => void): () => void;
 }
 

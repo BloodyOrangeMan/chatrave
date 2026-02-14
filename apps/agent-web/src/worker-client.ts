@@ -12,6 +12,7 @@ export interface RunnerWorkerClient {
   send(text: string): void;
   stop(turnId?: string): void;
   retry(messageId: string): void;
+  resetContext(): void;
   subscribe(listener: (event: RunnerEvent) => void): () => void;
 }
 
@@ -111,6 +112,7 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
 
   const runner = createAgentRunner({
     settings,
+    modelTimeoutMs: 120_000,
     getReplSnapshot: () => buildSnapshot(hostContext),
     readCode: async (input) => {
       const activeCode = hostContext?.editorRef?.current?.code ?? '';
@@ -119,8 +121,8 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
           path: 'active',
           code: activeCode,
           hash: hashString(activeCode),
-        lineCount: activeCode ? activeCode.split('\n').length : 0,
-      };
+          lineCount: activeCode ? activeCode.split('\n').length : 0,
+        };
       }
       return {
         path: input.path,
@@ -149,6 +151,9 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
     },
     retry(messageId) {
       void runner.retryMessage(messageId);
+    },
+    resetContext() {
+      runner.resetContext();
     },
     subscribe(listener) {
       listeners.add(listener);
