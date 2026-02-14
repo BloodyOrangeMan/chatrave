@@ -12,7 +12,7 @@ export interface RunnerWorkerClient {
   send(text: string): void;
   stop(turnId?: string): void;
   retry(messageId: string): void;
-  resetContext(): void;
+  resetContext(options?: { omitRuntimeContext?: boolean }): void;
   subscribe(listener: (event: RunnerEvent) => void): () => void;
 }
 
@@ -152,8 +152,8 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
     retry(messageId) {
       void runner.retryMessage(messageId);
     },
-    resetContext() {
-      runner.resetContext();
+    resetContext(options) {
+      runner.resetContext(options);
     },
     subscribe(listener) {
       listeners.add(listener);

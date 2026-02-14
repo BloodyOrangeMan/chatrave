@@ -265,8 +265,14 @@ describe('agent runner', () => {
     });
 
     const first = await runner.sendUserMessage('hello');
-    runner.resetContext();
+    runner.resetContext({ omitRuntimeContext: true });
+
+    await runner.sendUserMessage('after clear');
 
     await expect(runner.retryMessage(first.messageId)).rejects.toThrow(/No source message stored for retry/);
+    const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body as string) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(secondBody.messages[1].content).not.toContain('[runtime_context]');
   });
 });

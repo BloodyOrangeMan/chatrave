@@ -90,6 +90,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
   const now = config.now ?? Date.now;
   let running: { turnId: string; abortController: AbortController } | null = null;
   const completedContent = new Map<string, string>();
+  let omitRuntimeContext = false;
 
   const emit = (event: RunnerEvent): void => {
     for (const listener of listeners) {
@@ -156,9 +157,9 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
         throw new Error(`Unresolved prompt placeholders: ${prompt.unresolvedPlaceholders.join(', ')}`);
       }
 
-      const contextEnvelope = makeContextEnvelope(config);
-      const contextualUserText =
-        `[runtime_context]\n${JSON.stringify(contextEnvelope)}\n[/runtime_context]\n\n` + `User request:\n${text}`;
+      const contextualUserText = omitRuntimeContext
+        ? `User request:\n${text}`
+        : `[runtime_context]\n${JSON.stringify(makeContextEnvelope(config))}\n[/runtime_context]\n\nUser request:\n${text}`;
 
       const initialResponse = await callModel(abortController.signal, [
         { role: 'system', content: prompt.prompt },
@@ -445,12 +446,13 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
       }
       return executeTurn(messageId, source);
     },
-    resetContext() {
+    resetContext(options) {
       if (running) {
         running.abortController.abort();
         running = null;
       }
       completedContent.clear();
+      omitRuntimeContext = Boolean(options?.omitRuntimeContext);
       emit({ type: 'runner.state.changed', payload: { runningTurnId: null } });
     },
     subscribeToEvents(listener) {

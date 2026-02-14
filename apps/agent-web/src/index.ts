@@ -216,7 +216,7 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
 
   clearAll.onclick = () => {
     worker.stop();
-    worker.resetContext();
+    worker.resetContext({ omitRuntimeContext: true });
 
     composer.value = '';
     output.textContent = 'Agent ready.';

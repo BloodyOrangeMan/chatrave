@@ -30,6 +30,32 @@ function logModelInput(body: Record<string, unknown>): void {
   }
 }
 
+function logOpenRouterRequest(url: string, headers: Record<string, string>, body: Record<string, unknown>): void {
+  try {
+    console.info('[chatrave][llm] request', {
+      method: 'POST',
+      url,
+      headers,
+      body,
+      serializedBody: JSON.stringify(body),
+    });
+  } catch {
+    // Ignore logging failures.
+  }
+}
+
+function logOpenRouterResponse(url: string, response: Response): void {
+  try {
+    console.info('[chatrave][llm] response', {
+      url,
+      status: response.status,
+      ok: response.ok,
+    });
+  } catch {
+    // Ignore logging failures.
+  }
+}
+
 function buildBody(config: OpenRouterClientConfig, request: OpenRouterStreamRequest, stream: boolean): Record<string, unknown> {
   return {
     model: config.model,
@@ -58,6 +84,7 @@ async function postOpenRouter(
   };
 
   logModelInput(body);
+  logOpenRouterRequest(url, headers, body);
 
   try {
     const response = await fetch(url, {
@@ -66,6 +93,7 @@ async function postOpenRouter(
       headers,
       body: JSON.stringify(body),
     });
+    logOpenRouterResponse(url, response);
     return response;
   } catch (error) {
     throw makeOpenRouterError(
