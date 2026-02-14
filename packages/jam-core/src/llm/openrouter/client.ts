@@ -17,27 +17,13 @@ export interface OpenRouterStreamRequest {
   signal?: AbortSignal;
 }
 
-interface LoggedMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
 function logModelInput(body: Record<string, unknown>): void {
   try {
-    const messages = (body.messages as LoggedMessage[] | undefined) ?? [];
-    const systemPrompt = messages.find((message) => message.role === 'system')?.content ?? '';
-    const chatHistory = messages
-      .filter((message) => message.role !== 'system')
-      .map((message) => ({ role: message.role, content: message.content }));
-    const toolRelatedMessages = messages.filter((message) => /Tool results:|<function_calls>|<\|tool_call/i.test(message.content));
-
     console.info('[chatrave][llm] model_input', {
       model: body.model,
       reasoning: body.reasoning,
-      systemPrompt,
-      chatHistory,
-      toolDefinitions: 'No OpenRouter tool schema sent in this request path (pseudo-tools are prompt-driven).',
-      toolRelatedMessages,
+      rawMessages: body.messages,
+      rawBody: body,
     });
   } catch {
     // Ignore logging failures.
