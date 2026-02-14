@@ -17,7 +17,7 @@ export interface AgentSettings {
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   schemaVersion: 1,
   provider: 'openrouter',
-  model: 'moonshotai/kimi-2.5',
+  model: 'moonshotai/kimi-k2.5',
   reasoningEnabled: true,
   reasoningMode: 'balanced',
   temperature: 0.3,

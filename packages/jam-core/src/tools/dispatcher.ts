@@ -11,6 +11,9 @@ import { executeStrudelKnowledge, type KnowledgeSources } from './strudel-knowle
 export interface ToolDispatcherContext {
   now?: () => number;
   readCode?: (input: ReadCodeInput) => Promise<unknown>;
+  applyStrudelChange?: (
+    input: ApplyStrudelChangeInput,
+  ) => Promise<{ status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }>;
   knowledgeSources?: KnowledgeSources;
 }
 
@@ -28,7 +31,9 @@ export async function dispatchToolCall(call: ToolCall, context: ToolDispatcherCo
     }
 
     if (call.name === 'apply_strudel_change') {
-      const output = executeApplyStrudelChange(call.input as ApplyStrudelChangeInput);
+      const output = await executeApplyStrudelChange(call.input as ApplyStrudelChangeInput, {
+        applyStrudelChange: context.applyStrudelChange,
+      });
       const endedAt = now();
       return { id: call.id, name: call.name, status: 'succeeded', output, startedAt, endedAt, durationMs: endedAt - startedAt };
     }

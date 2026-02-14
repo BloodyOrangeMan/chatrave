@@ -1,4 +1,5 @@
 import type { ApplyStrudelChangeInput } from '../contracts';
+import { hashString } from '../common/hash';
 
 export interface ApplyValidationResult {
   ok: boolean;
@@ -7,6 +8,14 @@ export interface ApplyValidationResult {
 }
 
 export function validateApplyChange(input: ApplyStrudelChangeInput): ApplyValidationResult {
+  const currentHash = hashString(input.currentCode);
+  if (input.baseHash && input.baseHash !== currentHash) {
+    return {
+      ok: false,
+      diagnostics: [`STALE_BASE_HASH: expected ${input.baseHash} but active hash is ${currentHash}`],
+    };
+  }
+
   if (input.change.kind === 'full_code') {
     if (!input.change.content.trim()) {
       return { ok: false, diagnostics: ['Full code cannot be empty'] };

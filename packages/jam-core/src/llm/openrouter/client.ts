@@ -13,28 +13,35 @@ export interface OpenRouterClientConfig {
 export interface OpenRouterStreamRequest {
   userText: string;
   systemPrompt?: string;
+  messages?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
   signal?: AbortSignal;
 }
 
-export async function openRouterStream(
-  config: OpenRouterClientConfig,
-  request: OpenRouterStreamRequest,
-): Promise<Response> {
-  const url = `${config.baseUrl ?? 'https://openrouter.ai/api/v1'}/chat/completions`;
-  const body = {
+function buildBody(config: OpenRouterClientConfig, request: OpenRouterStreamRequest, stream: boolean): Record<string, unknown> {
+  return {
     model: config.model,
-    stream: true,
+    stream,
     temperature: config.temperature,
-    messages: [
-      ...(request.systemPrompt ? [{ role: 'system', content: request.systemPrompt }] : []),
-      { role: 'user', content: request.userText },
-    ],
+    messages:
+      request.messages ??
+      [
+        ...(request.systemPrompt ? [{ role: 'system' as const, content: request.systemPrompt }] : []),
+        { role: 'user' as const, content: request.userText },
+      ],
     reasoning: config.reasoningEnabled ? { effort: config.reasoningEffort } : undefined,
   };
+}
 
-  let response: Response;
+async function postOpenRouter(
+  config: OpenRouterClientConfig,
+  request: OpenRouterStreamRequest,
+  stream: boolean,
+): Promise<Response> {
+  const url = `${config.baseUrl ?? 'https://openrouter.ai/api/v1'}/chat/completions`;
+  const body = buildBody(config, request, stream);
+
   try {
-    response = await fetch(url, {
+    return await fetch(url, {
       method: 'POST',
       signal: request.signal,
       headers: {
@@ -50,6 +57,37 @@ export async function openRouterStream(
       true,
     );
   }
+}
+
+function extractCompletionText(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+  const maybeChoices = (payload as { choices?: Array<{ message?: { content?: unknown } }> }).choices;
+  if (!Array.isArray(maybeChoices) || maybeChoices.length === 0) {
+    return '';
+  }
+  const content = maybeChoices[0]?.message?.content;
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part || typeof part !== 'object') return '';
+        const text = (part as { text?: unknown }).text;
+        return typeof text === 'string' ? text : '';
+      })
+      .join('');
+  }
+  return '';
+}
+
+export async function openRouterStream(
+  config: OpenRouterClientConfig,
+  request: OpenRouterStreamRequest,
+): Promise<Response> {
+  const response = await postOpenRouter(config, request, true);
 
   if (!response.ok) {
     throw mapHttpStatusToError(response.status, await response.text());
@@ -60,4 +98,22 @@ export async function openRouterStream(
   }
 
   return response;
+}
+
+export async function openRouterComplete(
+  config: OpenRouterClientConfig,
+  request: OpenRouterStreamRequest,
+): Promise<string> {
+  const response = await postOpenRouter(config, request, false);
+  if (!response.ok) {
+    throw mapHttpStatusToError(response.status, await response.text());
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw makeOpenRouterError('Failed to parse OpenRouter completion JSON', 'parse', false);
+  }
+  return extractCompletionText(payload);
 }

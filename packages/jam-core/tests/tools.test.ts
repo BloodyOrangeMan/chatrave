@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { dispatchToolCall } from '../src/tools/dispatcher';
+import { hashString } from '../src/tools/common/hash';
 
 describe('tool dispatcher', () => {
   it('returns scheduled apply result', async () => {
+    const currentCode = 's("bd")';
     const result = await dispatchToolCall({
       id: '1',
       name: 'apply_strudel_change',
       input: {
-        currentCode: 's("bd")',
+        currentCode,
+        baseHash: hashString(currentCode),
         change: { kind: 'patch', content: 's("hh")' },
         policy: { quantize: 'next_cycle' },
       },
@@ -15,6 +18,23 @@ describe('tool dispatcher', () => {
 
     expect(result.status).toBe('succeeded');
     expect((result.output as { status: string }).status).toBe('scheduled');
+  });
+
+  it('rejects apply on stale base hash', async () => {
+    const result = await dispatchToolCall({
+      id: '1b',
+      name: 'apply_strudel_change',
+      input: {
+        currentCode: 's("bd")',
+        baseHash: 'fnv1a-deadbeef',
+        change: { kind: 'patch', content: 's("hh")' },
+        policy: { quantize: 'next_cycle' },
+      },
+    });
+
+    const output = result.output as { status: string; phase?: string };
+    expect(output.status).toBe('rejected');
+    expect(output.phase).toBe('STALE_BASE_HASH');
   });
 
   it('finds reference knowledge by exact match', async () => {

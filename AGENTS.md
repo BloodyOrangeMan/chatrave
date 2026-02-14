@@ -187,6 +187,26 @@ Runtime flow:
 
 ---
 
+## LLM REPL Awareness Policy (Hybrid, Mandatory)
+
+Use a hybrid context strategy for every LLM call:
+- Always include a compact runtime context envelope:
+  - `activeCodeHash`, `shadowCodeHash?`
+  - playback state (`started`, `cps/cpm`)
+  - quantize mode
+  - last apply/validation summary
+  - tool budget + repair budget remaining
+- Do **not** include full REPL code by default in every request.
+- Full code/context must be retrieved via `read_code(...)` when needed.
+
+Apply safety requirements:
+- `apply_strudel_change` requests must carry `baseHash`.
+- If `baseHash` is stale, tool must reject with `STALE_BASE_HASH`.
+- On `STALE_BASE_HASH`, runtime refreshes and retries once.
+- On unknown symbol rejection, runtime calls `strudel_knowledge(...)` and retries once.
+
+---
+
 ## Agent Behavior Rules
 1. If edit target is unclear, call `read_code` first.
 2. First attempt: generate conservative valid Strudel code.
