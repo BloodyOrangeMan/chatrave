@@ -1,0 +1,18 @@
+{
+  "name": "chatrave",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.4.1",
+  "scripts": {
+    "typecheck": "pnpm -r --filter './packages/*' --filter './apps/*' run typecheck",
+    "test": "pnpm -r --filter './packages/*' --filter './apps/*' run test",
+    "check:strudel-boundary": "bash tools/check-strudel-boundary.sh",
+    "check:secrets": "bash tools/check-secrets.sh",
+    "ci": "pnpm run check:strudel-boundary && pnpm run check:secrets && pnpm run typecheck && pnpm run test"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
+  }
+}
