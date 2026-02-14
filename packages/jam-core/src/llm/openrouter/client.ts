@@ -17,26 +17,27 @@ export interface OpenRouterStreamRequest {
   signal?: AbortSignal;
 }
 
-function logOpenRouterRequest(url: string, headers: Record<string, string>, body: Record<string, unknown>): void {
-  try {
-    console.info('[chatrave][llm] request', {
-      method: 'POST',
-      url,
-      headers,
-      body,
-      serializedBody: JSON.stringify(body),
-    });
-  } catch {
-    // Ignore logging failures.
-  }
+interface LoggedMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
 }
 
-function logOpenRouterResponse(url: string, response: Response): void {
+function logModelInput(body: Record<string, unknown>): void {
   try {
-    console.info('[chatrave][llm] response', {
-      url,
-      status: response.status,
-      ok: response.ok,
+    const messages = (body.messages as LoggedMessage[] | undefined) ?? [];
+    const systemPrompt = messages.find((message) => message.role === 'system')?.content ?? '';
+    const chatHistory = messages
+      .filter((message) => message.role !== 'system')
+      .map((message) => ({ role: message.role, content: message.content }));
+    const toolRelatedMessages = messages.filter((message) => /Tool results:|<function_calls>|<\|tool_call/i.test(message.content));
+
+    console.info('[chatrave][llm] model_input', {
+      model: body.model,
+      reasoning: body.reasoning,
+      systemPrompt,
+      chatHistory,
+      toolDefinitions: 'No OpenRouter tool schema sent in this request path (pseudo-tools are prompt-driven).',
+      toolRelatedMessages,
     });
   } catch {
     // Ignore logging failures.
@@ -70,7 +71,7 @@ async function postOpenRouter(
     authorization: `Bearer ${config.apiKey}`,
   };
 
-  logOpenRouterRequest(url, headers, body);
+  logModelInput(body);
 
   try {
     const response = await fetch(url, {
@@ -79,7 +80,6 @@ async function postOpenRouter(
       headers,
       body: JSON.stringify(body),
     });
-    logOpenRouterResponse(url, response);
     return response;
   } catch (error) {
     throw makeOpenRouterError(
