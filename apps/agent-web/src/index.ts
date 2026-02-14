@@ -92,6 +92,24 @@ function startPlaybackFromUserGesture(hostContext?: AgentHostContext): void {
   }
 }
 
+function pulseEditorBorder(status: 'scheduled' | 'applied' | 'rejected' | 'missing_apply'): void {
+  const editorRoot = document.querySelector('.cm-editor') as HTMLElement | null;
+  if (!editorRoot) {
+    return;
+  }
+
+  const color =
+    status === 'rejected' ? '#ff4d4f' : status === 'missing_apply' ? '#faad14' : '#52c41a';
+  const previousTransition = editorRoot.style.transition;
+  const previousBoxShadow = editorRoot.style.boxShadow;
+  editorRoot.style.transition = 'box-shadow 120ms ease-in-out';
+  editorRoot.style.boxShadow = `0 0 0 2px ${color}, 0 0 12px ${color}`;
+  window.setTimeout(() => {
+    editorRoot.style.boxShadow = previousBoxShadow;
+    editorRoot.style.transition = previousTransition;
+  }, 700);
+}
+
 export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostContext): void {
   let settings = loadSettings();
   let worker = createRunnerWorkerClient(settings, hostContext);
@@ -117,6 +135,20 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
 
     if (event.type === 'tool.call.completed') {
       appendOutput(`\n[Tool ${event.payload.name}: ${event.payload.status}]\n`);
+      return;
+    }
+
+    if (event.type === 'apply.status.changed') {
+      const line =
+        event.payload.status === 'scheduled'
+          ? `\n[Apply: scheduled${event.payload.applyAt ? ` at ${event.payload.applyAt}` : ''}]\n`
+          : event.payload.status === 'applied'
+            ? '\n[Apply: applied]\n'
+            : event.payload.status === 'missing_apply'
+              ? `\n[Apply: missing (${event.payload.reason ?? 'unknown'})]\n`
+              : `\n[Apply: rejected (${event.payload.reason ?? 'unknown'})]\n`;
+      appendOutput(line);
+      pulseEditorBorder(event.payload.status);
     }
   };
 

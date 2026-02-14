@@ -3,7 +3,16 @@ import type { AssistantTurnState, ChatMessage } from './chat';
 export type RunnerEvent =
   | {
       type: 'apply.status.changed';
-      payload: { status: 'scheduled' | 'applied' | 'rejected'; applyAt?: string; reason?: string };
+      payload: {
+        status: 'scheduled' | 'applied' | 'rejected' | 'missing_apply';
+        applyAt?: string;
+        reason?:
+          | string
+          | 'missing_apply_outcome'
+          | 'apply_not_attempted'
+          | 'apply failed'
+          | 'No code block found for auto-apply';
+      };
     }
   | {
       type: 'tool.call.started';

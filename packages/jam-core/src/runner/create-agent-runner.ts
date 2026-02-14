@@ -77,14 +77,6 @@ function extractReadCodeResult(data: unknown): { code: string; hash?: string } {
   };
 }
 
-function buildFallbackTechnoCode(): string {
-  return `$: stack(
-  s("bd*4").bank("tr909"),
-  s("~ cp ~ cp").bank("tr909"),
-  s("hh*8").bank("tr909").gain(.7)
-).dec(.4).room(.3).roomsize(.5)`;
-}
-
 export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
   const listeners = new Set<(event: RunnerEvent) => void>();
   const now = config.now ?? Date.now;
@@ -171,6 +163,8 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
       const parsedInitial = parsePseudoFunctionCalls(initialResponse);
       let finalContent = parsedInitial.cleanedText;
       let applyAttempted = false;
+      const jamRequest = isJamIntent(text);
+      let applyOutcome: 'scheduled' | 'applied' | 'rejected' | 'missing_apply' | null = null;
 
       if (parsedInitial.calls.length > 0) {
         const toolResults: unknown[] = [];
@@ -308,11 +302,6 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
         }
 
         const currentRead = await config.readCode({ path: 'active' });
-        if (!generatedCode) {
-          generatedCode = buildFallbackTechnoCode();
-          finalContent += '\n\nUsed fallback groove because model code generation timed out.';
-        }
-
         if (generatedCode) {
           const current = extractReadCodeResult(currentRead);
           const applyCallId = `tool-${now()}-auto-apply`;
@@ -350,6 +339,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
               type: 'apply.status.changed',
               payload: { status: output.status as 'scheduled' | 'applied', applyAt: output.applyAt },
             });
+            applyOutcome = output.status as 'scheduled' | 'applied';
             finalContent += `\n\nApply status: ${output.status}${output.applyAt ? ` at ${output.applyAt}` : ''}.`;
             applyAttempted = true;
           } else {
@@ -357,6 +347,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
               type: 'apply.status.changed',
               payload: { status: 'rejected', reason: output.diagnostics?.join('; ') || 'apply failed' },
             });
+            applyOutcome = 'rejected';
             finalContent += `\n\nApply status: rejected (${output.diagnostics?.join('; ') || 'apply failed'}).`;
             applyAttempted = true;
           }
@@ -365,8 +356,24 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
             type: 'apply.status.changed',
             payload: { status: 'rejected', reason: 'No code block found for auto-apply' },
           });
+          applyOutcome = 'rejected';
           finalContent += '\n\nApply status: rejected (No code block found for auto-apply).';
         }
+      }
+
+      if (jamRequest && !applyOutcome) {
+        const reason = applyAttempted ? 'missing_apply_outcome' : 'apply_not_attempted';
+        emit({
+          type: 'apply.status.changed',
+          payload: { status: 'missing_apply', reason },
+        });
+        finalContent = `${finalContent ? `${finalContent}\n\n` : ''}Apply status: missing_apply (${reason}).`;
+      }
+
+      if (!finalContent.trim()) {
+        finalContent = jamRequest
+          ? 'Apply status: missing_apply (missing_apply_outcome).'
+          : 'No response content generated.';
       }
 
       if (finalContent) {

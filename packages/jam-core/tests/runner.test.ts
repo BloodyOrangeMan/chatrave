@@ -247,6 +247,38 @@ describe('agent runner', () => {
     expect(deltas.join('')).toContain('Apply status: scheduled');
   });
 
+  it('emits missing_apply outcome when jam request does not produce apply', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockCompletionResponse('Some analysis only, no code block.'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const runner = createAgentRunner({
+      settings: {
+        schemaVersion: 1,
+        provider: 'openrouter',
+        model: 'moonshotai/kimi-k2.5',
+        reasoningEnabled: true,
+        reasoningMode: 'balanced',
+        temperature: 0.2,
+        apiKey: 'k',
+      },
+      readCode: async () => ({ code: 's(\"bd\")', lineCount: 1 }),
+      now: () => 100,
+    });
+
+    const events: string[] = [];
+    const deltas: string[] = [];
+    runner.subscribeToEvents((event) => {
+      events.push(event.type);
+      if (event.type === 'assistant.stream.delta') {
+        deltas.push(event.payload.delta);
+      }
+    });
+
+    await runner.sendUserMessage('give me a techno beat');
+    expect(events).toContain('apply.status.changed');
+    expect(deltas.join('')).toContain('Apply status: missing_apply');
+  });
+
   it('clears stored conversation context on resetContext', async () => {
     const fetchMock = vi.fn().mockResolvedValue(mockCompletionResponse('ok'));
     vi.stubGlobal('fetch', fetchMock);
