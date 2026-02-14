@@ -25,6 +25,8 @@ build/
 *.swp
 *.swo
 *~
+.claude/
+.codex/
 
 # OS
 .DS_Store
@@ -35,6 +37,30 @@ Thumbs.db
 .strudel/cache/
 coverage/
 
+# Strudel submodule (separate git repo)
+strudel/
+
 # Temporary files
 *.tmp
 .cache/
+
+# Test results and screenshots
+test-results/
+screenshots/
+screeshots/
+e2e-test-screenshots/
+*.png
+!**/public/**/*.png
+!**/icons/**/*.png
+!**/assets/**/*.png
+!strudel/src-tauri/icons/*.png
+!strudel/docs/**/*.png
+!strudel/website/public/img/*.png
+
+# Test files
+test*.yaml
+step*.yaml
+
+# Playwright
+.playwright/
+.playwright-cli/
