@@ -4,8 +4,9 @@ import { registerAgentTabRenderer } from '@chatrave/strudel-adapter';
 import { createRunnerWorkerClient, type AgentHostContext } from './worker-client';
 import {
   buildScenariosUrl,
+  clearMockRuntimeOverrides,
+  enableMockRuntimeDefaults,
   isDevFakeUiEnabled,
-  isLocalDevBaseUrl,
   readRuntimeOverrides,
   readRuntimeScenario,
   writeDevFakeUiEnabled,
@@ -17,11 +18,21 @@ import './styles/agent.css';
 
 type ToolLogView = ToolLogPayload & { expanded: boolean };
 type PopoverKind = 'settings' | 'dev' | null;
+const EMPTY_HINT_CHIPS = [
+  'Give me a techno beat',
+  'Add a bassline layer',
+  'Make it more minimal',
+  'Explain this pattern',
+];
 
 interface ChatMessageView {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  thinkingContent?: string;
+  thinkingStreaming?: boolean;
+  thinkingExpanded?: boolean;
+  thinkingManuallyCollapsed?: boolean;
   createdAt: number;
   streaming?: boolean;
   failedReason?: string;
@@ -123,6 +134,25 @@ function copyText(text: string): Promise<void> {
   return navigator.clipboard.writeText(text);
 }
 
+function summarizeThinking(content?: string): string {
+  const value = (content ?? '').replace(/\s+/g, ' ').trim();
+  if (!value) {
+    return '';
+  }
+  if (value.length <= 56) {
+    return value;
+  }
+  return `${value.slice(-56)}...`;
+}
+
+function stripPseudoToolTags(input: string): string {
+  return input
+    .replace(/<function_calls>[\s\S]*?<\/function_calls>/g, '')
+    .replace(/<\|tool_calls_section_begin\|>[\s\S]*?<\|tool_calls_section_end\|>/g, '')
+    .replace(/<\|tool_call(?:s)?_[^|]+?\|>/g, '')
+    .trim();
+}
+
 function setIconLabel(target: HTMLElement, icon: string, label: string): void {
   target.innerHTML = '';
   const iconNode = document.createElement('span');
@@ -149,6 +179,9 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
     messages: persistedSession.messages.map((message) => ({
       ...message,
       toolLogs: (message.toolLogs ?? []).map((log) => ({ ...log, expanded: Boolean(log.expanded) })),
+      thinkingExpanded: Boolean(message.thinkingExpanded),
+      thinkingManuallyCollapsed: Boolean(message.thinkingManuallyCollapsed),
+      thinkingStreaming: false,
     })),
     runningTurnId: null,
     pinnedToBottom: true,
@@ -369,15 +402,37 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
     feed.innerHTML = '';
 
     if (state.messages.length === 0) {
+      const emptyState = document.createElement('div');
+      emptyState.className = 'agent-empty-state';
+
       const empty = document.createElement('div');
       empty.className = 'agent-empty';
       empty.textContent = 'Agent ready.';
-      feed.append(empty);
+      emptyState.append(empty);
+
+      const chips = document.createElement('div');
+      chips.className = 'agent-empty-chips';
+      for (const label of EMPTY_HINT_CHIPS) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'agent-chip';
+        chip.textContent = label;
+        chip.onclick = () => {
+          composer.value = label;
+          composer.focus();
+          refreshPrimaryButtonState();
+        };
+        chips.append(chip);
+      }
+      emptyState.append(chips);
+      feed.append(emptyState);
     }
 
     for (const message of state.messages) {
       const row = document.createElement('div');
       row.className = `agent-row ${message.role}`;
+      const stack = document.createElement('div');
+      stack.className = 'agent-message-stack';
 
       const card = document.createElement('article');
       card.className = `agent-message ${message.role}`;
@@ -402,42 +457,50 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
       right.append(badge);
 
       if (message.role === 'assistant') {
-        const actions = document.createElement('div');
-        actions.className = 'agent-actions';
-
-        const copyButton = document.createElement('button');
-        copyButton.type = 'button';
-        copyButton.className = 'agent-quiet-button';
-        setIconLabel(copyButton, '⧉', 'Copy');
-        copyButton.onclick = async () => {
-          await copyText(message.content);
-          setIconLabel(copyButton, '✓', 'Copied');
-          setTimeout(() => {
-            setIconLabel(copyButton, '⧉', 'Copy');
-          }, 1200);
-        };
-        actions.append(copyButton);
-
-        if (message.sourceUserText) {
-          const regenerate = document.createElement('button');
-          regenerate.type = 'button';
-          regenerate.className = 'agent-quiet-button';
-          setIconLabel(regenerate, '↻', 'Regenerate');
-          regenerate.onclick = () => {
-            if (state.runningTurnId) {
-              return;
-            }
-            lastUserTextForTurn = message.sourceUserText || '';
-            worker.send(lastUserTextForTurn);
-          };
-          actions.append(regenerate);
-        }
-
-        right.append(actions);
+        // Keep header compact; action buttons are rendered below the message body.
       }
 
       header.append(role, right);
       card.append(header);
+
+      if (message.role === 'assistant' && (message.thinkingContent || message.thinkingStreaming)) {
+        const details = document.createElement('details');
+        details.className = 'agent-thinking';
+        details.open = message.thinkingStreaming
+          ? !message.thinkingManuallyCollapsed
+          : Boolean(message.thinkingExpanded);
+        details.ontoggle = () => {
+          if (message.thinkingStreaming) {
+            message.thinkingManuallyCollapsed = !details.open;
+            message.thinkingExpanded = details.open;
+            return;
+          }
+          message.thinkingExpanded = details.open;
+          if (details.open) {
+            message.thinkingManuallyCollapsed = false;
+          }
+        };
+
+        const summary = document.createElement('summary');
+        summary.className = 'agent-thinking-summary';
+        const preview = summarizeThinking(message.thinkingContent);
+        const thinkingText =
+          message.thinkingStreaming && preview
+            ? `Thinking… ${preview}`
+            : message.thinkingStreaming
+              ? 'Thinking…'
+              : 'Thinking';
+        summary.textContent = message.cookedLabel && !message.thinkingStreaming
+          ? `${thinkingText} · ${message.cookedLabel}`
+          : thinkingText;
+
+        const body = document.createElement('pre');
+        body.className = 'agent-thinking-body';
+        body.textContent = message.thinkingContent || '';
+
+        details.append(summary, body);
+        card.append(details);
+      }
 
       if (message.toolLogs.length > 0) {
         for (const log of message.toolLogs) {
@@ -517,11 +580,53 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
       }
       card.append(body);
 
-      if (message.cookedLabel) {
+      if (message.role === 'assistant' && message.cookedLabel) {
         const cooked = document.createElement('div');
-        cooked.className = 'agent-cooked';
+        cooked.className = 'agent-hint';
         cooked.textContent = message.cookedLabel;
         card.append(cooked);
+      }
+
+      let externalActions: HTMLDivElement | null = null;
+      if (message.role === 'assistant') {
+        const actions = document.createElement('div');
+        actions.className = 'agent-actions-bottom';
+
+        const copyButton = document.createElement('button');
+        copyButton.type = 'button';
+        copyButton.className = 'agent-mini-icon-button';
+        copyButton.textContent = '⧉';
+        copyButton.setAttribute('aria-label', 'Copy');
+        copyButton.title = 'Copy';
+        copyButton.onclick = async () => {
+          await copyText(message.content);
+          copyButton.textContent = '✓';
+          copyButton.title = 'Copied';
+          setTimeout(() => {
+            copyButton.textContent = '⧉';
+            copyButton.title = 'Copy';
+          }, 1200);
+        };
+        actions.append(copyButton);
+
+        if (message.sourceUserText) {
+          const regenerate = document.createElement('button');
+          regenerate.type = 'button';
+          regenerate.className = 'agent-mini-icon-button';
+          regenerate.textContent = '↻';
+          regenerate.setAttribute('aria-label', 'Regenerate');
+          regenerate.title = 'Regenerate';
+          regenerate.onclick = () => {
+            if (state.runningTurnId) {
+              return;
+            }
+            lastUserTextForTurn = message.sourceUserText || '';
+            worker.send(lastUserTextForTurn);
+          };
+          actions.append(regenerate);
+        }
+
+        externalActions = actions;
       }
 
       if (message.failedReason) {
@@ -531,7 +636,11 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
         card.append(error);
       }
 
-      row.append(card);
+      stack.append(card);
+      if (externalActions) {
+        stack.append(externalActions);
+      }
+      row.append(stack);
       feed.append(row);
     }
 
@@ -549,6 +658,10 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
       id: messageId,
       role: 'assistant',
       content: '',
+      thinkingContent: '',
+      thinkingStreaming: false,
+      thinkingExpanded: false,
+      thinkingManuallyCollapsed: false,
       createdAt: Date.now(),
       streaming: true,
       sourceUserText: lastUserTextForTurn,
@@ -600,9 +713,32 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
       return;
     }
 
+    if (event.type === 'assistant.thinking.delta') {
+      const message = upsertAssistantMessage(event.payload.turnId, event.payload.messageId);
+      message.thinkingContent = `${message.thinkingContent ?? ''}${event.payload.delta}`;
+      message.thinkingStreaming = true;
+      if (!message.thinkingManuallyCollapsed) {
+        message.thinkingExpanded = true;
+      }
+      markNewContentArrived();
+      renderMessages();
+      return;
+    }
+
+    if (event.type === 'assistant.thinking.completed') {
+      const message = upsertAssistantMessage(event.payload.turnId, event.payload.messageId);
+      message.thinkingStreaming = false;
+      message.thinkingExpanded = false;
+      message.thinkingManuallyCollapsed = false;
+      renderMessages();
+      return;
+    }
+
     if (event.type === 'assistant.turn.completed') {
       const message = upsertAssistantMessage(event.payload.turnId, event.payload.messageId);
       message.streaming = false;
+      message.thinkingStreaming = false;
+      message.content = stripPseudoToolTags(event.payload.content);
       const duration = event.payload.timing.durationMs ?? 0;
       message.cookedLabel = `Cooked for ${Math.floor(duration / 60000)} m ${Math.floor((duration % 60000) / 1000)} s`;
       markNewContentArrived();
@@ -615,6 +751,9 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
       const message = assistantId ? state.messages.find((item) => item.id === assistantId) : undefined;
       if (message) {
         message.streaming = false;
+        message.thinkingStreaming = false;
+        message.thinkingExpanded = false;
+        message.thinkingManuallyCollapsed = false;
       }
       renderMessages();
       return;
@@ -625,6 +764,10 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
         id: createMessageId('assistant-failed'),
         role: 'assistant',
         content: '',
+        thinkingContent: '',
+        thinkingStreaming: false,
+        thinkingExpanded: false,
+        thinkingManuallyCollapsed: false,
         createdAt: Date.now(),
         failedReason: event.payload.reason,
         sourceUserText: lastUserTextForTurn,
@@ -693,10 +836,9 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
   };
 
   const refreshDevScenarioOptions = async () => {
-    const latestOverrides = readRuntimeOverrides();
-    const baseUrl = latestOverrides.openRouterBaseUrl;
+    const baseUrl = readRuntimeOverrides().openRouterBaseUrl;
     const currentScenario = readRuntimeScenario();
-    if (!isDevFakeUiEnabled() || !isLocalDevBaseUrl(baseUrl)) {
+    if (!isDevFakeUiEnabled()) {
       devScenarioLabel.style.display = 'none';
       return;
     }
@@ -705,13 +847,8 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
     devScenarioStatus.textContent = 'Loading scenarios...';
     setScenarioOptions([], currentScenario);
 
-    if (!baseUrl) {
-      devScenarioStatus.textContent = 'Set base URL to local mock server to load scenarios.';
-      return;
-    }
-
     try {
-      const response = await fetch(buildScenariosUrl(baseUrl));
+      const response = await fetch(buildScenariosUrl(baseUrl ?? 'http://localhost:8787/api/v1'));
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
@@ -896,6 +1033,10 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
           id: createMessageId('assistant-dev'),
           role: 'assistant',
           content: 'Dev knowledge query completed.',
+          thinkingContent: '',
+          thinkingStreaming: false,
+          thinkingExpanded: false,
+          thinkingManuallyCollapsed: false,
           createdAt: Date.now(),
           toolLogs: [log],
         });
@@ -911,6 +1052,12 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
 
   devToggle.addEventListener('change', () => {
     writeDevFakeUiEnabled(devToggle.checked);
+    if (devToggle.checked) {
+      enableMockRuntimeDefaults();
+    } else {
+      clearMockRuntimeOverrides();
+      writeRuntimeScenario(undefined);
+    }
     bindWorker(settings);
     void refreshDevScenarioOptions();
     refreshDevKnowledgeVisibility();

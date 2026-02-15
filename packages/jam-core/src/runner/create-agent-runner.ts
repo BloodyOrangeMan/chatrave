@@ -1,12 +1,13 @@
+import { createOpenAI } from '@ai-sdk/openai';
+import { stepCountIs, streamText, tool } from 'ai';
 import type { RunnerContextEnvelope, RunnerEvent } from '@chatrave/shared-types';
-import type { CompletionClient } from '../llm/contracts';
-import { createOpenRouterCompletionClient } from '../llm/openrouter/adapter';
+import { z } from 'zod';
 import { buildSystemPrompt } from '../prompts/loader';
 import { dispatchToolCall } from '../tools/dispatcher';
+import type { ToolCall, ToolResult } from '../tools/contracts';
 import { mapModeToEffort } from './model-profile';
 import { parsePseudoFunctionCalls } from './tool-call-parser';
 import type { AgentRunner, AgentRunnerConfig } from './types';
-import type { ApplyStrudelChangeInput, ToolCall, ToolResult } from '../tools/contracts';
 
 function createIds(now: () => number): { turnId: string; messageId: string } {
   const id = `${now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -31,6 +32,7 @@ function makeContextEnvelope(config: AgentRunnerConfig, options: RuntimeContextO
   };
   const baseSnapshot = config.getReplSnapshot?.() ?? fallbackSnapshot;
   const snapshot = { ...baseSnapshot };
+
   if (options.activeSnapshot) {
     snapshot.activeCodeHash = options.activeSnapshot.hash;
     if (options.includeActiveCode) {
@@ -42,189 +44,8 @@ function makeContextEnvelope(config: AgentRunnerConfig, options: RuntimeContextO
 
   return {
     snapshot,
-    toolBudgetRemaining: config.globalToolBudget ?? 20,
+    toolBudgetRemaining: config.globalToolBudget ?? 40,
     repairAttemptsRemaining: config.maxRepairAttempts ?? 4,
-  };
-}
-
-function formatToolResults(results: unknown[]): string {
-  return JSON.stringify(results, null, 2);
-}
-
-function isPlanningOnlyReply(text: string): boolean {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return false;
-  }
-
-  return /^(i('| a)m|i will|i('|’)ll)\s+(check|inspect|look at|review)\b/i.test(trimmed) && trimmed.length < 260;
-}
-
-function isSufficientPostToolResponse(text: string): boolean {
-  const trimmed = text.trim();
-  if (!trimmed) {
-    return false;
-  }
-
-  const looksLikePlanningOnly = isPlanningOnlyReply(trimmed);
-  if (looksLikePlanningOnly && trimmed.length < 200) {
-    return false;
-  }
-
-  return true;
-}
-
-function summarizeToolResultsForFallback(results: unknown[]): string {
-  if (!Array.isArray(results) || results.length === 0) {
-    return 'No tool output was available.';
-  }
-
-  for (const result of results) {
-    if (!result || typeof result !== 'object') {
-      continue;
-    }
-    const maybe = result as {
-      name?: unknown;
-      status?: unknown;
-      output?: unknown;
-      error?: { message?: unknown };
-    };
-    if (maybe.name === 'apply_strudel_change') {
-      if (maybe.status === 'failed') {
-        const reason = typeof maybe.error?.message === 'string' ? maybe.error.message : 'apply failed';
-        return `Apply failed: ${reason}.`;
-      }
-      if (maybe.output && typeof maybe.output === 'object') {
-        const apply = maybe.output as {
-          status?: unknown;
-          diagnostics?: unknown;
-          applyAt?: unknown;
-        };
-        if (apply.status === 'rejected') {
-          const diagnostics = Array.isArray(apply.diagnostics)
-            ? apply.diagnostics.filter((item): item is string => typeof item === 'string')
-            : [];
-          if (diagnostics.length > 0) {
-            return `Apply rejected: ${diagnostics.join('; ')}.`;
-          }
-          return 'Apply rejected by validation.';
-        }
-        if (apply.status === 'scheduled') {
-          return typeof apply.applyAt === 'string'
-            ? `Apply scheduled at ${apply.applyAt}.`
-            : 'Apply scheduled on next quantized boundary.';
-        }
-        if (apply.status === 'applied') {
-          return 'Apply completed successfully.';
-        }
-      }
-    }
-  }
-
-  return 'Tools completed, but final model response was empty.';
-}
-
-function extractApplyToolOutput(result: ToolResult): { status?: string; applyAt?: string; diagnostics?: string[] } {
-  if (!result.output || typeof result.output !== 'object') {
-    return {};
-  }
-  const maybe = result.output as { status?: unknown; applyAt?: unknown; diagnostics?: unknown };
-  return {
-    status: typeof maybe.status === 'string' ? maybe.status : undefined,
-    applyAt: typeof maybe.applyAt === 'string' ? maybe.applyAt : undefined,
-    diagnostics: Array.isArray(maybe.diagnostics)
-      ? maybe.diagnostics.filter((item): item is string => typeof item === 'string')
-      : undefined,
-  };
-}
-
-function extractApplyErrorCode(result: ToolResult): string | undefined {
-  if (!result.output || typeof result.output !== 'object') {
-    return undefined;
-  }
-  const maybe = result.output as { errorCode?: unknown };
-  return typeof maybe.errorCode === 'string' ? maybe.errorCode : undefined;
-}
-
-function extractUnknownSymbols(result: ToolResult): string[] {
-  if (!result.output || typeof result.output !== 'object') {
-    return [];
-  }
-  const maybe = result.output as { unknownSymbols?: unknown };
-  if (!Array.isArray(maybe.unknownSymbols)) {
-    return [];
-  }
-  return maybe.unknownSymbols.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
-}
-
-function findUnknownSoundApplyResult(results: ToolResult[]): { result: ToolResult; symbols: string[] } | null {
-  for (let i = results.length - 1; i >= 0; i -= 1) {
-    const result = results[i];
-    if (result.name !== 'apply_strudel_change' || result.status !== 'succeeded') {
-      continue;
-    }
-    if (extractApplyErrorCode(result) !== 'UNKNOWN_SOUND') {
-      continue;
-    }
-    const symbols = extractUnknownSymbols(result);
-    if (symbols.length === 0) {
-      continue;
-    }
-    return { result, symbols };
-  }
-  return null;
-}
-
-function buildFailedToolResult(
-  call: ToolCall,
-  now: () => number,
-  message: string,
-): ToolResult {
-  const startedAt = now();
-  const endedAt = startedAt;
-  return {
-    id: call.id,
-    name: call.name,
-    status: 'failed',
-    error: { message },
-    startedAt,
-    endedAt,
-    durationMs: 0,
-  };
-}
-
-function toApplyInput(input: unknown): ApplyStrudelChangeInput | null {
-  if (!input || typeof input !== 'object') {
-    return null;
-  }
-
-  const maybe = input as {
-    baseHash?: unknown;
-    change?: unknown;
-  };
-
-  let change = maybe.change;
-  if (typeof change === 'string') {
-    try {
-      change = JSON.parse(change) as unknown;
-    } catch {
-      return null;
-    }
-  }
-  if (!change || typeof change !== 'object') {
-    return null;
-  }
-  const parsedChange = change as { kind?: unknown; content?: unknown };
-  if ((parsedChange.kind !== 'patch' && parsedChange.kind !== 'full_code') || typeof parsedChange.content !== 'string') {
-    return null;
-  }
-
-  return {
-    baseHash: typeof maybe.baseHash === 'string' ? maybe.baseHash : '',
-    change: {
-      kind: parsedChange.kind,
-      content: parsedChange.content,
-    },
   };
 }
 
@@ -247,18 +68,165 @@ async function readActiveSnapshot(config: AgentRunnerConfig): Promise<ReadCodeSn
   return toReadCodeSnapshot(output);
 }
 
+function splitForUiStreaming(content: string, chunkSize: number): string[] {
+  if (!content) {
+    return [];
+  }
+  const chunks: string[] = [];
+  for (let i = 0; i < content.length; i += chunkSize) {
+    chunks.push(content.slice(i, i + chunkSize));
+  }
+  return chunks;
+}
+
+function summarizeToolResultsForFallback(results: ToolResult[]): string {
+  if (!Array.isArray(results) || results.length === 0) {
+    return 'No tool output was available.';
+  }
+
+  for (const result of results) {
+    if (result.name !== 'apply_strudel_change') {
+      continue;
+    }
+    if (result.status === 'failed') {
+      return `Apply failed: ${result.error?.message ?? 'runtime error'}.`;
+    }
+    if (!result.output || typeof result.output !== 'object') {
+      continue;
+    }
+    const output = result.output as {
+      status?: unknown;
+      diagnostics?: unknown;
+      applyAt?: unknown;
+    };
+    if (output.status === 'rejected') {
+      const diagnostics = Array.isArray(output.diagnostics)
+        ? output.diagnostics.filter((item): item is string => typeof item === 'string')
+        : [];
+      return diagnostics.length > 0 ? `Apply rejected: ${diagnostics.join('; ')}.` : 'Apply rejected.';
+    }
+    if (output.status === 'scheduled') {
+      return typeof output.applyAt === 'string'
+        ? `Apply scheduled at ${output.applyAt}.`
+        : 'Apply scheduled on quantized boundary.';
+    }
+    if (output.status === 'applied') {
+      return 'Apply completed successfully.';
+    }
+  }
+
+  return 'Tools completed without a final user-facing answer.';
+}
+
+function extractApplyStatus(result: ToolResult): { status: 'scheduled' | 'applied' | 'rejected'; applyAt?: string; reason?: string } | null {
+  if (result.name !== 'apply_strudel_change') {
+    return null;
+  }
+
+  if (result.status === 'failed') {
+    return {
+      status: 'rejected',
+      reason: result.error?.message ?? 'apply failed',
+    };
+  }
+
+  if (!result.output || typeof result.output !== 'object') {
+    return null;
+  }
+
+  const output = result.output as {
+    status?: unknown;
+    applyAt?: unknown;
+    diagnostics?: unknown;
+  };
+
+  if (output.status === 'scheduled' || output.status === 'applied') {
+    return {
+      status: output.status,
+      applyAt: typeof output.applyAt === 'string' ? output.applyAt : undefined,
+    };
+  }
+
+  if (output.status === 'rejected') {
+    const diagnostics = Array.isArray(output.diagnostics)
+      ? output.diagnostics.filter((item): item is string => typeof item === 'string')
+      : [];
+    return {
+      status: 'rejected',
+      reason: diagnostics.join('; ') || 'apply rejected',
+    };
+  }
+
+  return null;
+}
+
+function createApplyInputSchema() {
+  return z.object({
+    baseHash: z.string().min(1, 'baseHash is required'),
+    change: z.discriminatedUnion('kind', [
+      z.object({
+        kind: z.literal('full_code'),
+        content: z.string(),
+      }),
+      z.object({
+        kind: z.literal('search_replace'),
+        search: z.string(),
+        replace: z.string(),
+        occurrence: z.enum(['single', 'all']).optional(),
+      }),
+    ]),
+  });
+}
+
+function createReadInputSchema() {
+  return z
+    .object({
+      path: z.string().optional(),
+      query: z.string().optional(),
+    })
+    .passthrough();
+}
+
+function createKnowledgeInputSchema() {
+  return z.object({
+    query: z.union([
+      z.string(),
+      z.object({
+        q: z.string(),
+        domain: z.enum(['auto', 'reference', 'sounds']).optional(),
+      }),
+    ]),
+  });
+}
+
+function toStructuredToolCalls(raw: Array<{ id: string; name: string; argumentsJson: string }>, now: () => number): ToolCall[] {
+  return raw
+    .map((call, index) => {
+      const name = call.name;
+      if (name !== 'read_code' && name !== 'apply_strudel_change' && name !== 'strudel_knowledge') {
+        return null;
+      }
+      let input: unknown = {};
+      try {
+        input = JSON.parse(call.argumentsJson || '{}');
+      } catch {
+        input = {};
+      }
+      return {
+        id: call.id || `tool-${now()}-${index}`,
+        name,
+        input,
+      };
+    })
+    .filter((value): value is ToolCall => Boolean(value));
+}
+
 export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
   const listeners = new Set<(event: RunnerEvent) => void>();
   const now = config.now ?? Date.now;
-  let running: { turnId: string; abortController: AbortController } | null = null;
   const completedContent = new Map<string, string>();
+  let running: { turnId: string; abortController: AbortController } | null = null;
   let omitRuntimeContext = false;
-  const completionClient: CompletionClient =
-    config.completionClient ??
-    createOpenRouterCompletionClient({
-      baseUrl: config.openRouterBaseUrl,
-      extraHeaders: config.openRouterExtraHeaders,
-    });
   let cachedKnowledgeSources = config.knowledgeSources;
   let lastModelKnownHash: string | null = null;
 
@@ -268,40 +236,9 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
     }
   };
 
-  async function callModel(
-    signal: AbortSignal,
-    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-  ): Promise<string> {
-    const timeoutMs = config.modelTimeoutMs ?? 120_000;
-    const timeoutController = new AbortController();
-    const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
-    const abortOnParent = () => timeoutController.abort();
-    signal.addEventListener('abort', abortOnParent, { once: true });
-
-    try {
-      return await completionClient.complete({
-        apiKey: config.settings.apiKey,
-        model: config.settings.model,
-        temperature: config.settings.temperature,
-        reasoningEnabled: config.settings.reasoningEnabled,
-        reasoningEffort: mapModeToEffort(config.settings.reasoningMode),
-        messages,
-        signal: timeoutController.signal,
-      });
-    } catch (error) {
-      if (timeoutController.signal.aborted && !signal.aborted) {
-        throw new Error(`Model timeout after ${timeoutMs}ms`);
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeoutHandle);
-      signal.removeEventListener('abort', abortOnParent);
-    }
-  }
-
   async function executeTurn(messageId: string, text: string): Promise<{ turnId: string; messageId: string }> {
     const ids = createIds(now);
-    const start = now();
+    const startedAt = now();
 
     if (running) {
       running.abortController.abort();
@@ -310,12 +247,13 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
     const abortController = new AbortController();
     running = { turnId: ids.turnId, abortController };
     emit({ type: 'runner.state.changed', payload: { runningTurnId: ids.turnId } });
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
     try {
       const prompt = await buildSystemPrompt({
         vars: {
           MAX_REPAIR_ATTEMPTS: String(config.maxRepairAttempts ?? 4),
-          GLOBAL_TOOL_BUDGET: String(config.globalToolBudget ?? 20),
+          GLOBAL_TOOL_BUDGET: String(config.globalToolBudget ?? 40),
         },
       });
       if (prompt.unresolvedPlaceholders.length > 0) {
@@ -324,14 +262,18 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
 
       const skipRuntimeContextThisTurn = omitRuntimeContext;
       omitRuntimeContext = false;
+
       const activeSnapshot = await readActiveSnapshot(config);
       const includeActiveCodeInContext =
         !skipRuntimeContextThisTurn &&
         !!activeSnapshot &&
-        activeSnapshot.hash !== lastModelKnownHash;
-      if (includeActiveCodeInContext && activeSnapshot) {
+        activeSnapshot.hash !== lastModelKnownHash &&
+        activeSnapshot.code.trim().length > 0;
+
+      if (activeSnapshot) {
         lastModelKnownHash = activeSnapshot.hash;
       }
+
       const contextualUserText = skipRuntimeContextThisTurn
         ? `User request:\n${text}`
         : `[runtime_context]\n${JSON.stringify(
@@ -341,262 +283,329 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
             }),
           )}\n[/runtime_context]\n\nUser request:\n${text}`;
 
-      const maxToolRoundsPerTurn = 4;
-      let remainingToolBudget = config.globalToolBudget ?? 20;
-      let toolRounds = 0;
-      let applyOutcome: 'scheduled' | 'applied' | 'rejected' | null = null;
-      let unknownRepairUsed = false;
-      let forcedFinalAttempted = false;
-      let completionReason: 'normal' | 'forced_final' | 'fallback_final' = 'normal';
-      let finalContent = '';
-      let lastToolResults: unknown[] = [];
+      const timeoutMs = config.modelTimeoutMs ?? 120_000;
+      timeoutHandle = setTimeout(() => abortController.abort(), timeoutMs);
 
-      let response = await callModel(abortController.signal, [
-        { role: 'system', content: prompt.prompt },
-        { role: 'user', content: contextualUserText },
-      ]);
+      let remainingToolBudget = config.globalToolBudget ?? 40;
+      const maxSteps = Math.max(1, Math.min(remainingToolBudget, 24));
+      const toolResults: ToolResult[] = [];
+      let emittedText = '';
 
-      while (true) {
-        const parsed = parsePseudoFunctionCalls(response);
-        const cleaned = parsed.cleanedText.trim();
-
-        if (parsed.calls.length === 0) {
-          if (toolRounds > 0 && !isSufficientPostToolResponse(cleaned) && !forcedFinalAttempted) {
-            forcedFinalAttempted = true;
-            completionReason = 'forced_final';
-            response = await callModel(abortController.signal, [
-              { role: 'system', content: prompt.prompt },
-              { role: 'user', content: contextualUserText },
-              {
-                role: 'assistant',
-                content: cleaned || 'I used tools to inspect and prepare a response.',
-              },
-              {
-                role: 'user',
-                content:
-                  `Tool results:\n${formatToolResults(lastToolResults)}\n\n` +
-                  'Your previous answer was empty. Respond now with final user-facing Strudel guidance only. No tool tags.',
-              },
-            ]);
-            continue;
-          }
-
-          finalContent = cleaned;
-          break;
+      const ensureKnowledgeSources = async () => {
+        if (cachedKnowledgeSources || !config.getKnowledgeSources) {
+          return;
         }
-
-        if (toolRounds >= maxToolRoundsPerTurn) {
-          finalContent = 'Stopped after maximum tool rounds. Try a narrower request.';
-          break;
+        try {
+          cachedKnowledgeSources = await config.getKnowledgeSources();
+        } catch {
+          cachedKnowledgeSources = undefined;
         }
-        toolRounds += 1;
+      };
 
-        const toolResults: unknown[] = [];
-        for (const call of parsed.calls) {
-          if (remainingToolBudget <= 0) {
-            finalContent = 'Stopped after exhausting tool budget. Try a narrower request.';
-            break;
-          }
-          remainingToolBudget -= 1;
-
-          let dispatchCall: ToolCall = call;
-          if (call.name === 'strudel_knowledge' && !cachedKnowledgeSources && config.getKnowledgeSources) {
-            try {
-              cachedKnowledgeSources = await config.getKnowledgeSources();
-            } catch {
-              cachedKnowledgeSources = undefined;
-            }
-          }
-          if (call.name === 'apply_strudel_change') {
-            const parsedInput = toApplyInput(call.input);
-            if (!parsedInput) {
-              const failedResult = buildFailedToolResult(call, now, 'Invalid apply_strudel_change payload');
-              emit({ type: 'tool.call.started', payload: { id: call.id, name: call.name } });
-              emit({
-                type: 'tool.call.completed',
-                payload: {
-                  id: failedResult.id,
-                  name: failedResult.name,
-                  status: failedResult.status,
-                  durationMs: failedResult.durationMs,
-                  request: call.input,
-                  response: failedResult.output,
-                  errorMessage: failedResult.error?.message,
-                },
-              });
-              if (!applyOutcome) {
-                emit({
-                  type: 'apply.status.changed',
-                  payload: { status: 'rejected', reason: failedResult.error?.message || 'apply failed' },
-                });
-                applyOutcome = 'rejected';
-              }
-              toolResults.push(failedResult);
-              continue;
-            }
-            dispatchCall = { ...call, input: parsedInput };
-          }
-
-          emit({ type: 'tool.call.started', payload: { id: dispatchCall.id, name: dispatchCall.name } });
-          let result = await dispatchToolCall(dispatchCall, {
-            now,
-            readCode: config.readCode,
-            applyStrudelChange: config.applyStrudelChange,
-            knowledgeSources: cachedKnowledgeSources,
-          }) as ToolResult;
-          emit({
-            type: 'tool.call.completed',
-            payload: {
-              id: dispatchCall.id,
-              name: dispatchCall.name,
-              status: result.status,
-              durationMs: result.durationMs,
-              request: dispatchCall.input,
-              response: result.output,
-              errorMessage: result.error?.message,
-            },
-          });
-          toolResults.push(result);
-
-          if (call.name === 'apply_strudel_change') {
-            if (result.status === 'failed') {
-              if (!applyOutcome) {
-                emit({
-                  type: 'apply.status.changed',
-                  payload: { status: 'rejected', reason: result.error?.message || 'apply failed' },
-                });
-                applyOutcome = 'rejected';
-              }
-            } else {
-              const output = extractApplyToolOutput(result);
-              if (output.status === 'scheduled' || output.status === 'applied') {
-                if (!applyOutcome || applyOutcome === 'rejected') {
-                  emit({
-                    type: 'apply.status.changed',
-                    payload: { status: output.status, applyAt: output.applyAt },
-                  });
-                  applyOutcome = output.status;
-                }
-              } else {
-                if (!applyOutcome) {
-                  emit({
-                    type: 'apply.status.changed',
-                    payload: { status: 'rejected', reason: output.diagnostics?.join('; ') || 'apply failed' },
-                  });
-                  applyOutcome = 'rejected';
-                }
-              }
-            }
-          }
-
-        }
-
-        if (finalContent) {
-          break;
-        }
-        lastToolResults = toolResults;
-
-        const unknownApply = !unknownRepairUsed ? findUnknownSoundApplyResult(toolResults as ToolResult[]) : null;
-        if (unknownApply) {
-          unknownRepairUsed = true;
-          if (remainingToolBudget <= 0) {
-            finalContent = 'Stopped before repair because tool budget is exhausted.';
-            break;
-          }
-          if (!cachedKnowledgeSources && config.getKnowledgeSources) {
-            try {
-              cachedKnowledgeSources = await config.getKnowledgeSources();
-            } catch {
-              cachedKnowledgeSources = undefined;
-            }
-          }
-          const knowledgeCall: ToolCall = {
-            id: `tool-${now()}-unknown-repair`,
-            name: 'strudel_knowledge',
-            input: { query: unknownApply.symbols.join(' ') },
+      const runTool = async (name: ToolCall['name'], input: unknown, toolCallId?: string): Promise<unknown> => {
+        if (remainingToolBudget <= 0) {
+          return {
+            status: 'rejected',
+            phase: 'input',
+            errorCode: 'TOOL_BUDGET_EXHAUSTED',
+            diagnostics: ['Global tool budget exhausted for this turn.'],
+            suggestedNext: 'Retry with a narrower request.',
           };
-          remainingToolBudget -= 1;
-          emit({ type: 'tool.call.started', payload: { id: knowledgeCall.id, name: knowledgeCall.name } });
-          const knowledgeResult = await dispatchToolCall(knowledgeCall, {
-            now,
-            readCode: config.readCode,
-            applyStrudelChange: config.applyStrudelChange,
-            knowledgeSources: cachedKnowledgeSources,
-          });
-          emit({
-            type: 'tool.call.completed',
-            payload: {
-              id: knowledgeResult.id,
-              name: knowledgeResult.name,
-              status: knowledgeResult.status,
-              durationMs: knowledgeResult.durationMs,
-              request: knowledgeCall.input,
-              response: knowledgeResult.output,
-              errorMessage: knowledgeResult.error?.message,
-            },
-          });
-          toolResults.push(knowledgeResult);
-          lastToolResults = toolResults;
+        }
+        remainingToolBudget -= 1;
 
-          response = await callModel(abortController.signal, [
-            { role: 'system', content: prompt.prompt },
-            { role: 'user', content: contextualUserText },
-            {
-              role: 'assistant',
-              content: cleaned || 'I used tools to inspect and prepare a response.',
+        if (name === 'strudel_knowledge') {
+          await ensureKnowledgeSources();
+        }
+
+        const callId = toolCallId ?? `tool-${now()}-${Math.random().toString(16).slice(2, 8)}`;
+        const call: ToolCall = { id: callId, name, input };
+
+        emit({ type: 'tool.call.started', payload: { id: call.id, name: call.name } });
+
+        const result = await dispatchToolCall(call, {
+          now,
+          readCode: config.readCode,
+          applyStrudelChange: config.applyStrudelChange,
+          knowledgeSources: cachedKnowledgeSources,
+        });
+
+        toolResults.push(result);
+
+        emit({
+          type: 'tool.call.completed',
+          payload: {
+            id: result.id,
+            name: result.name,
+            status: result.status,
+            durationMs: result.durationMs,
+            request: call.input,
+            response: result.output,
+            errorMessage: result.error?.message,
+          },
+        });
+
+        const applyStatus = extractApplyStatus(result);
+        if (applyStatus) {
+          emit({
+            type: 'apply.status.changed',
+            payload: {
+              status: applyStatus.status,
+              applyAt: applyStatus.applyAt,
+              reason: applyStatus.reason,
             },
-            {
-              role: 'user',
-              content:
-                `Tool results:\n${formatToolResults(toolResults)}\n\n` +
-                `Repair request: The apply failed due to unknown symbols (${unknownApply.symbols.join(', ')}). ` +
-                'Return a repaired apply_strudel_change tool call only.',
+          });
+        }
+
+        if (result.status === 'failed') {
+          return { status: 'tool_failed', message: result.error?.message ?? 'Tool execution failed.' };
+        }
+
+        return result.output ?? {};
+      };
+
+      if (config.completionClient) {
+        const messagesForClient: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+          { role: 'system', content: prompt.prompt },
+          { role: 'user', content: contextualUserText },
+        ];
+
+        let finalText = '';
+        let toolRound = 0;
+        while (true) {
+          const response = await config.completionClient.complete({
+            apiKey: config.settings.apiKey,
+            model: config.settings.model,
+            temperature: config.settings.temperature,
+            reasoningEnabled: config.settings.reasoningEnabled,
+            reasoningEffort: mapModeToEffort(config.settings.reasoningMode),
+            messages: messagesForClient,
+            toolChoice: 'auto',
+            tools: [],
+            signal: abortController.signal,
+            onDelta: async (delta) => {
+              emittedText += delta;
+              emit({
+                type: 'assistant.stream.delta',
+                payload: { turnId: ids.turnId, messageId: ids.messageId, delta },
+              });
             },
-          ]);
+          });
+          finalText = response.content || finalText;
+          const toolCalls = toStructuredToolCalls(response.toolCalls ?? [], now);
+          if (toolCalls.length === 0) {
+            break;
+          }
+
+          const results: ToolResult[] = [];
+          for (const call of toolCalls) {
+            const output = await runTool(call.name, call.input, call.id);
+            results.push({
+              id: call.id,
+              name: call.name,
+              status: 'succeeded',
+              output,
+              startedAt: now(),
+              endedAt: now(),
+              durationMs: 0,
+            });
+          }
+
+          messagesForClient.push(
+            { role: 'assistant', content: response.content || 'Tool calls completed.' },
+            { role: 'user', content: `Tool results:\n${JSON.stringify(results, null, 2)}` },
+          );
+          toolRound += 1;
+          if (toolRound >= Math.max(1, Math.min(config.globalToolBudget ?? 40, 8))) {
+            break;
+          }
+        }
+
+        if (!finalText.trim()) {
+          finalText = [
+            'I could not generate a complete final response this turn.',
+            summarizeToolResultsForFallback(toolResults),
+            'Please retry and I will continue from the latest state.',
+          ].join(' ');
+        }
+
+        if (!emittedText && finalText) {
+          for (const delta of splitForUiStreaming(finalText, 2)) {
+            emit({
+              type: 'assistant.stream.delta',
+              payload: { turnId: ids.turnId, messageId: ids.messageId, delta },
+            });
+          }
+          emittedText = finalText;
+        }
+
+        emit({
+          type: 'assistant.thinking.completed',
+          payload: { turnId: ids.turnId, messageId: ids.messageId },
+        });
+
+        const endedAt = now();
+        completedContent.set(messageId, text);
+        emit({
+          type: 'assistant.turn.completed',
+          payload: {
+            turnId: ids.turnId,
+            messageId: ids.messageId,
+            status: 'completed',
+            timing: {
+              startedAt,
+              endedAt,
+              durationMs: endedAt - startedAt,
+            },
+            content: finalText,
+            completedReason: 'normal',
+          },
+        });
+        return ids;
+      }
+
+      const provider = createOpenAI({
+        apiKey: config.settings.apiKey,
+        baseURL: config.openRouterBaseUrl ?? 'https://openrouter.ai/api/v1',
+        headers: config.openRouterExtraHeaders,
+      });
+
+      const modelResult = streamText({
+        model: provider.chat(config.settings.model),
+        temperature: config.settings.temperature,
+        stopWhen: stepCountIs(maxSteps),
+        abortSignal: abortController.signal,
+        system: prompt.prompt,
+        messages: [{ role: 'user', content: contextualUserText }],
+        providerOptions: config.settings.reasoningEnabled
+          ? { openai: { reasoning: { effort: mapModeToEffort(config.settings.reasoningMode) } } }
+          : undefined,
+        tools: {
+          read_code: tool({
+            description: 'Read active code/context safely before edits.',
+            inputSchema: createReadInputSchema(),
+            execute: async (input, options): Promise<unknown> => runTool('read_code', input, options.toolCallId),
+          }),
+          apply_strudel_change: tool({
+            description: 'Apply a validated Strudel code change using dry-run + quantized swap.',
+            inputSchema: createApplyInputSchema(),
+            execute: async (input, options): Promise<unknown> => runTool('apply_strudel_change', input, options.toolCallId),
+          }),
+          strudel_knowledge: tool({
+            description: 'Lookup Strudel reference/sounds with exact + fuzzy match.',
+            inputSchema: createKnowledgeInputSchema(),
+            execute: async (input, options): Promise<unknown> => runTool('strudel_knowledge', input, options.toolCallId),
+          }),
+        },
+      });
+
+      let sawThinking = false;
+      let sawTextDelta = false;
+
+      for await (const chunk of modelResult.fullStream as AsyncIterable<Record<string, unknown>>) {
+        const type = typeof chunk.type === 'string' ? chunk.type : '';
+        const delta =
+          typeof chunk.textDelta === 'string'
+            ? chunk.textDelta
+            : typeof chunk.text === 'string'
+              ? chunk.text
+              : '';
+
+        if (type === 'reasoning-delta' && delta) {
+          sawThinking = true;
+          emit({
+            type: 'assistant.thinking.delta',
+            payload: { turnId: ids.turnId, messageId: ids.messageId, delta },
+          });
           continue;
         }
 
-        if (!cachedKnowledgeSources && config.getKnowledgeSources) {
-          try {
-            cachedKnowledgeSources = await config.getKnowledgeSources();
-          } catch {
-            cachedKnowledgeSources = undefined;
-          }
+        if (type === 'text-delta' && delta) {
+          sawTextDelta = true;
+          emittedText += delta;
+          emit({
+            type: 'assistant.stream.delta',
+            payload: { turnId: ids.turnId, messageId: ids.messageId, delta },
+          });
         }
-
-        response = await callModel(abortController.signal, [
-          { role: 'system', content: prompt.prompt },
-          { role: 'user', content: contextualUserText },
-          {
-            role: 'assistant',
-            content: cleaned || 'I used tools to inspect and prepare a response.',
-          },
-          {
-            role: 'user',
-            content:
-              `Tool results:\n${formatToolResults(toolResults)}\n\n` +
-              'Provide the final user-facing response. Do not output <function_calls> tags.',
-          },
-        ]);
       }
 
-      if (!finalContent.trim()) {
-        completionReason = 'fallback_final';
-        finalContent = [
+      const finalTextRaw = await modelResult.text;
+      let finalText = emittedText || finalTextRaw || '';
+
+      const parsedPseudoCalls = parsePseudoFunctionCalls(finalText);
+      if (toolResults.length === 0 && parsedPseudoCalls.calls.length > 0) {
+        for (const call of parsedPseudoCalls.calls) {
+          if (call.name !== 'read_code' && call.name !== 'apply_strudel_change' && call.name !== 'strudel_knowledge') {
+            continue;
+          }
+          await runTool(call.name, call.input ?? {});
+        }
+
+        finalText = parsedPseudoCalls.cleanedText.trim();
+        emittedText = '';
+
+        const followUp = streamText({
+          model: provider.chat(config.settings.model),
+          temperature: config.settings.temperature,
+          abortSignal: abortController.signal,
+          system: prompt.prompt,
+          messages: [
+            { role: 'user', content: contextualUserText },
+            { role: 'assistant', content: finalText || 'Tool calls completed.' },
+            { role: 'user', content: `Tool results:\n${JSON.stringify(toolResults, null, 2)}\n\nProvide final user-facing answer only.` },
+          ],
+          providerOptions: config.settings.reasoningEnabled
+            ? { openai: { reasoning: { effort: mapModeToEffort(config.settings.reasoningMode) } } }
+            : undefined,
+        });
+
+        for await (const chunk of followUp.fullStream as AsyncIterable<Record<string, unknown>>) {
+          const type = typeof chunk.type === 'string' ? chunk.type : '';
+          const delta =
+            typeof chunk.textDelta === 'string'
+              ? chunk.textDelta
+              : typeof chunk.text === 'string'
+                ? chunk.text
+                : '';
+          if (type === 'text-delta' && delta) {
+            sawTextDelta = true;
+            emittedText += delta;
+            emit({
+              type: 'assistant.stream.delta',
+              payload: { turnId: ids.turnId, messageId: ids.messageId, delta },
+            });
+          }
+        }
+        const followUpText = await followUp.text;
+        finalText = emittedText || followUpText || finalText;
+      }
+
+      finalText = parsePseudoFunctionCalls(finalText).cleanedText;
+
+      if (!finalText.trim()) {
+        finalText = [
           'I could not generate a complete final response this turn.',
-          summarizeToolResultsForFallback(lastToolResults),
+          summarizeToolResultsForFallback(toolResults),
           'Please retry and I will continue from the latest state.',
         ].join(' ');
       }
 
-      if (finalContent) {
-        emit({
-          type: 'assistant.stream.delta',
-          payload: { turnId: ids.turnId, messageId: ids.messageId, delta: finalContent },
-        });
+      if (!sawTextDelta && finalText) {
+        for (const delta of splitForUiStreaming(finalText, 2)) {
+          emit({
+            type: 'assistant.stream.delta',
+            payload: { turnId: ids.turnId, messageId: ids.messageId, delta },
+          });
+        }
       }
 
-      const end = now();
+      emit({
+        type: 'assistant.thinking.completed',
+        payload: { turnId: ids.turnId, messageId: ids.messageId },
+      });
+
+      const endedAt = now();
       completedContent.set(messageId, text);
       emit({
         type: 'assistant.turn.completed',
@@ -604,14 +613,23 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
           turnId: ids.turnId,
           messageId: ids.messageId,
           status: 'completed',
-          timing: { startedAt: start, endedAt: end, durationMs: end - start },
-          content: finalContent,
-          completedReason: completionReason,
+          timing: {
+            startedAt,
+            endedAt,
+            durationMs: endedAt - startedAt,
+          },
+          content: finalText,
+          completedReason: sawThinking ? 'normal' : 'normal',
         },
       });
     } catch (error) {
+      const endedAt = now();
       const aborted = abortController.signal.aborted;
-      const end = now();
+
+      emit({
+        type: 'assistant.thinking.completed',
+        payload: { turnId: ids.turnId, messageId: ids.messageId },
+      });
 
       if (aborted) {
         emit({
@@ -620,7 +638,11 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
             turnId: ids.turnId,
             messageId: ids.messageId,
             status: 'canceled',
-            timing: { startedAt: start, endedAt: end, durationMs: end - start },
+            timing: {
+              startedAt,
+              endedAt,
+              durationMs: endedAt - startedAt,
+            },
           },
         });
       } else {
@@ -632,13 +654,16 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
               role: 'assistant',
               content: '',
               status: 'failed',
-              createdAt: start,
+              createdAt: startedAt,
             },
             reason: (error as Error).message,
           },
         });
       }
     } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
       if (running?.turnId === ids.turnId) {
         running = null;
       }
