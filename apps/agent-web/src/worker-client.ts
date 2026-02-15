@@ -1,6 +1,6 @@
 import { createAgentRunner } from '@chatrave/jam-core';
 import type { AgentSettings, ReplSnapshot, RunnerEvent } from '@chatrave/shared-types';
-import { transpiler } from '@strudel/transpiler';
+import { transpiler } from '@strudel/transpiler/transpiler.mjs';
 
 export interface AgentHostContext {
   started?: boolean;
@@ -20,6 +20,23 @@ export interface RunnerWorkerClient {
 type HostApplyResult =
   | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
   | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] };
+
+const dryRunValidateChange = (
+  code: string,
+): { ok: true } | { ok: false; diagnostics: string[]; unknownSymbols: string[] } => {
+  try {
+    transpiler(code, { id: 'chatrave-shadow-dry-run' });
+    return { ok: true };
+  } catch (error) {
+    const message = (error as Error).message || String(error);
+    return {
+      ok: false,
+      // Keep Strudel transpiler error text unmodified for maximum fidelity.
+      diagnostics: [message],
+      unknownSymbols: [],
+    };
+  }
+};
 
 function hashString(input: string): string {
   let hash = 2166136261;
@@ -175,21 +192,3 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
     },
   };
 }
-  const dryRunValidateChange = (
-    code: string,
-  ): { ok: true } | { ok: false; diagnostics: string[]; unknownSymbols: string[] } => {
-    try {
-      transpiler(code, { id: 'chatrave-shadow-dry-run' });
-      return { ok: true };
-    } catch (error) {
-      const message = (error as Error).message || String(error);
-      const unknownSymbols = /is not defined/i.test(message)
-        ? [message.match(/([A-Za-z_][A-Za-z0-9_]*) is not defined/i)?.[1] ?? 'unknown']
-        : [];
-      return {
-        ok: false,
-        diagnostics: [`DRY_RUN_VALIDATE_FAILED: ${message}`],
-        unknownSymbols,
-      };
-    }
-  };
