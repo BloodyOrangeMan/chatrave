@@ -42,18 +42,28 @@ function buildSettings(): AgentSettings {
   };
 }
 
+function hashString(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a-${(hash >>> 0).toString(16)}`;
+}
+
 function setupCapturedApply(
   initialCode = 's("bd")',
   options?: { soundsAvailable?: string[]; exposeSoundMap?: boolean },
 ): {
   apply: (
-    input: { change: { kind: 'patch' | 'full_code'; content: string } },
+    input: { baseHash: string; change: { kind: 'patch' | 'full_code'; content: string } },
   ) => Promise<
     | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
     | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] }
   >;
   editor: { code: string; setCode: ReturnType<typeof vi.fn>; repl: { scheduler: { cps: number } } };
   handleEvaluate: ReturnType<typeof vi.fn>;
+  getBaseHash: () => string;
 } {
   const handleEvaluate = vi.fn();
   const editor = {
@@ -63,7 +73,7 @@ function setupCapturedApply(
   };
   let capturedApply:
     | ((
-        input: { change: { kind: 'patch' | 'full_code'; content: string } },
+        input: { baseHash: string; change: { kind: 'patch' | 'full_code'; content: string } },
       ) => Promise<
         | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
         | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] }
@@ -105,7 +115,7 @@ function setupCapturedApply(
       }
     : { repl: {} };
 
-  return { apply: capturedApply, editor, handleEvaluate };
+  return { apply: capturedApply, editor, handleEvaluate, getBaseHash: () => hashString(editor.code) };
 }
 
 describe('worker-client apply validation', () => {
@@ -117,14 +127,14 @@ describe('worker-client apply validation', () => {
   });
 
   it('rejects malformed stack code (missing comma) and keeps active code unchanged', async () => {
-    const { apply, editor, handleEvaluate } = setupCapturedApply('s("bd")');
+    const { apply, editor, handleEvaluate, getBaseHash } = setupCapturedApply('s("bd")');
     const broken = `stack(
   s("bd*4"),
   s("hh*8")
   s("cp*2")
 )`;
 
-    const result = await apply({ change: { kind: 'full_code', content: broken } });
+    const result = await apply({ baseHash: getBaseHash(), change: { kind: 'full_code', content: broken } });
     expect(result.status).toBe('rejected');
     if (result.status !== 'rejected') {
       throw new Error('Expected rejected result');
@@ -137,14 +147,14 @@ describe('worker-client apply validation', () => {
   });
 
   it('rejects unclosed function call code', async () => {
-    const { apply } = setupCapturedApply('s("bd")');
+    const { apply, getBaseHash } = setupCapturedApply('s("bd")');
     const broken = `stack(
   s("bd*4"),
   s("hh*8"),
   s("cp*2")
 `;
 
-    const result = await apply({ change: { kind: 'full_code', content: broken } });
+    const result = await apply({ baseHash: getBaseHash(), change: { kind: 'full_code', content: broken } });
     expect(result.status).toBe('rejected');
     if (result.status !== 'rejected') {
       throw new Error('Expected rejected result');
@@ -154,13 +164,13 @@ describe('worker-client apply validation', () => {
   });
 
   it('rejects invalid patch content before scheduling', async () => {
-    const { apply, editor } = setupCapturedApply('s("bd")');
+    const { apply, editor, getBaseHash } = setupCapturedApply('s("bd")');
     const brokenPatch = `stack(
   s("hh*8")
   s("cp*2")
 )`;
 
-    const result = await apply({ change: { kind: 'patch', content: brokenPatch } });
+    const result = await apply({ baseHash: getBaseHash(), change: { kind: 'patch', content: brokenPatch } });
     expect(result.status).toBe('rejected');
     if (result.status !== 'rejected') {
       throw new Error('Expected rejected result');
@@ -171,8 +181,8 @@ describe('worker-client apply validation', () => {
   });
 
   it('extracts unknownSymbols from dry-run failures', async () => {
-    const { apply } = setupCapturedApply('s("bd")');
-    const result = await apply({ change: { kind: 'full_code', content: '__unknown__' } });
+    const { apply, getBaseHash } = setupCapturedApply('s("bd")');
+    const result = await apply({ baseHash: getBaseHash(), change: { kind: 'full_code', content: '__unknown__' } });
     expect(result.status).toBe('rejected');
     if (result.status !== 'rejected') {
       throw new Error('Expected rejected result');
@@ -182,8 +192,9 @@ describe('worker-client apply validation', () => {
   });
 
   it('rejects sounds that are not currently loaded', async () => {
-    const { apply, editor } = setupCapturedApply('s("bd")');
+    const { apply, editor, getBaseHash } = setupCapturedApply('s("bd")');
     const result = await apply({
+      baseHash: getBaseHash(),
       change: { kind: 'full_code', content: 'stack(s("bd*4"), s("definitely_not_a_sound"))' },
     });
     expect(result.status).toBe('rejected');
@@ -197,8 +208,9 @@ describe('worker-client apply validation', () => {
   });
 
   it('rejects apply when loaded sound inventory is unavailable (fail-safe)', async () => {
-    const { apply, editor } = setupCapturedApply('s("bd")', { exposeSoundMap: false });
+    const { apply, editor, getBaseHash } = setupCapturedApply('s("bd")', { exposeSoundMap: false });
     const result = await apply({
+      baseHash: getBaseHash(),
       change: { kind: 'full_code', content: 'stack(s("bd*4"), s("hh*8"), s("cp*2"))' },
     });
     expect(result.status).toBe('rejected');
@@ -212,8 +224,9 @@ describe('worker-client apply validation', () => {
   });
 
   it('preserves undefined global variable diagnostics from dry-run validation', async () => {
-    const { apply, editor } = setupCapturedApply('s("bd")');
+    const { apply, editor, getBaseHash } = setupCapturedApply('s("bd")');
     const result = await apply({
+      baseHash: getBaseHash(),
       change: { kind: 'full_code', content: 'stack(s("bd*4"), missingGlobal)' },
     });
     expect(result.status).toBe('rejected');
@@ -226,12 +239,12 @@ describe('worker-client apply validation', () => {
   });
 
   it('schedules code that defines and uses local variables', async () => {
-    const { apply, editor, handleEvaluate } = setupCapturedApply('s("bd")');
+    const { apply, editor, handleEvaluate, getBaseHash } = setupCapturedApply('s("bd")');
     const validWithDefs = `const kick = s("bd*4")
 const hats = s("hh*8")
 stack(kick, hats)`;
 
-    const result = await apply({ change: { kind: 'full_code', content: validWithDefs } });
+    const result = await apply({ baseHash: getBaseHash(), change: { kind: 'full_code', content: validWithDefs } });
     expect(result.status).toBe('scheduled');
     vi.advanceTimersByTime(600);
     expect(editor.code).toBe(validWithDefs);
@@ -240,14 +253,14 @@ stack(kick, hats)`;
   });
 
   it('accepts setcpm(120/4) on the first line and schedules apply', async () => {
-    const { apply, editor, handleEvaluate } = setupCapturedApply('s("bd")');
+    const { apply, editor, handleEvaluate, getBaseHash } = setupCapturedApply('s("bd")');
     const withTempoFirstLine = `setcpm(120/4)
 stack(
   s("bd*4"),
   s("hh*8")
 )`;
 
-    const result = await apply({ change: { kind: 'full_code', content: withTempoFirstLine } });
+    const result = await apply({ baseHash: getBaseHash(), change: { kind: 'full_code', content: withTempoFirstLine } });
     expect(result.status).toBe('scheduled');
     vi.advanceTimersByTime(600);
     expect(editor.code).toBe(withTempoFirstLine);
@@ -256,14 +269,14 @@ stack(
   });
 
   it('schedules valid code and applies quantized update after delay', async () => {
-    const { apply, editor, handleEvaluate } = setupCapturedApply('s("bd")');
+    const { apply, editor, handleEvaluate, getBaseHash } = setupCapturedApply('s("bd")');
     const valid = `stack(
   s("bd*4"),
   s("hh*8"),
   s("cp*2")
 )`;
 
-    const result = await apply({ change: { kind: 'full_code', content: valid } });
+    const result = await apply({ baseHash: getBaseHash(), change: { kind: 'full_code', content: valid } });
     expect(result.status).toBe('scheduled');
     if (result.status !== 'scheduled' && result.status !== 'applied') {
       throw new Error('Expected scheduled/applied result');

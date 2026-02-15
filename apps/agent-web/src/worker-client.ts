@@ -1,6 +1,6 @@
-import { createAgentRunner } from '@chatrave/jam-core';
+import { createAgentRunner, dispatchToolCall } from '@chatrave/jam-core';
 import type { AgentSettings, ReplSnapshot, RunnerEvent } from '@chatrave/shared-types';
-import type { ApplyStrudelChangeInput } from '@chatrave/jam-core';
+import type { ApplyStrudelChangeInput, StrudelKnowledgeInput } from '@chatrave/jam-core';
 import { getReferenceSnapshot, getSoundsSnapshot } from '@chatrave/strudel-adapter';
 import { transpiler } from '@strudel/transpiler/transpiler.mjs';
 import { readRuntimeOverrides } from './runtime-overrides';
@@ -17,6 +17,7 @@ export interface RunnerWorkerClient {
   stop(turnId?: string): void;
   retry(messageId: string): void;
   resetContext(options?: { omitRuntimeContext?: boolean }): void;
+  runDevKnowledge(input: StrudelKnowledgeInput): Promise<unknown>;
   subscribe(listener: (event: RunnerEvent) => void): () => void;
 }
 
@@ -317,6 +318,20 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
     },
     resetContext(options) {
       runner.resetContext(options);
+    },
+    async runDevKnowledge(input) {
+      const knowledgeSources = await loadKnowledgeSources();
+      const result = await dispatchToolCall(
+        {
+          id: `dev-knowledge-${Date.now()}`,
+          name: 'strudel_knowledge',
+          input,
+        },
+        {
+          knowledgeSources,
+        },
+      );
+      return result.output ?? result.error ?? { status: 'unavailable' };
     },
     subscribe(listener) {
       listeners.add(listener);

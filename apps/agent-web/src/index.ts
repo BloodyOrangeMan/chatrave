@@ -8,6 +8,7 @@ import {
   isLocalDevBaseUrl,
   readRuntimeOverrides,
   readRuntimeScenario,
+  writeDevFakeUiEnabled,
   writeRuntimeScenario,
 } from './runtime-overrides';
 
@@ -250,6 +251,39 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
   const devScenarioStatus = document.createElement('div');
   devScenarioStatus.style.fontSize = '11px';
   devScenarioStatus.style.color = '#d0d0d0';
+  const devKnowledgeQuery = document.createElement('input');
+  devKnowledgeQuery.type = 'text';
+  devKnowledgeQuery.placeholder = 'e.g. room, cp, euclid, setcpm';
+  styleControl(devKnowledgeQuery);
+  const devKnowledgeDomain = document.createElement('select');
+  styleControl(devKnowledgeDomain);
+  for (const option of ['auto', 'reference', 'sounds'] as const) {
+    const item = document.createElement('option');
+    item.value = option;
+    item.textContent = option;
+    devKnowledgeDomain.append(item);
+  }
+  const runDevKnowledge = document.createElement('button');
+  runDevKnowledge.textContent = 'Run knowledge';
+  styleButton(runDevKnowledge);
+  const devKnowledgeRow = document.createElement('div');
+  devKnowledgeRow.style.display = 'grid';
+  devKnowledgeRow.style.gap = '6px';
+  const devKnowledgeControls = document.createElement('div');
+  devKnowledgeControls.style.display = 'flex';
+  devKnowledgeControls.style.gap = '8px';
+  devKnowledgeControls.append(devKnowledgeDomain, runDevKnowledge);
+  devKnowledgeRow.append(devKnowledgeQuery, devKnowledgeControls);
+  const devKnowledgeLabel = createLabeledInput('Knowledge query (dev)', devKnowledgeRow);
+  const devKnowledgeStatus = document.createElement('div');
+  devKnowledgeStatus.style.fontSize = '11px';
+  devKnowledgeStatus.style.color = '#d0d0d0';
+  devKnowledgeStatus.textContent = 'Runs local strudel_knowledge directly (no LLM call).';
+  devKnowledgeLabel.append(devKnowledgeStatus);
+  const devToggle = document.createElement('input');
+  devToggle.type = 'checkbox';
+  devToggle.checked = isDevFakeUiEnabled();
+  const devToggleLabel = createLabeledInput('Enable mock LLM (dev)', devToggle);
   const devScenarioLabel = createLabeledInput('Mock scenario (dev)', devScenarioSelect);
   devScenarioLabel.append(devScenarioStatus);
 
@@ -311,6 +345,10 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
     }
   };
 
+  const refreshDevKnowledgeVisibility = () => {
+    devKnowledgeLabel.style.display = isDevFakeUiEnabled() ? 'flex' : 'none';
+  };
+
   function persistPatch(patch: Partial<AgentSettings>): void {
     settings = saveSettings(patch);
     bindWorker(settings);
@@ -329,9 +367,46 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
     devScenarioStatus.textContent = `Using scenario: ${label}`;
     appendOutput(`\n[Dev] mock scenario set to ${label}\n`);
   });
+  runDevKnowledge.addEventListener('click', async () => {
+    const q = devKnowledgeQuery.value.trim();
+    if (!q) {
+      devKnowledgeStatus.textContent = 'Query is required.';
+      return;
+    }
+    const request = {
+      query: {
+        q,
+        domain: devKnowledgeDomain.value as 'auto' | 'reference' | 'sounds',
+      },
+    };
+    devKnowledgeStatus.textContent = 'Running...';
+    runDevKnowledge.disabled = true;
+    try {
+      const response = await worker.runDevKnowledge(request);
+      devKnowledgeStatus.textContent = 'Completed.';
+      appendOutput(
+        `\n[Dev Tool] strudel_knowledge` +
+          `\n[Tool Request]\n${formatJsonBlock(request)}` +
+          `\n[Tool Response]\n${formatJsonBlock(response)}\n`,
+      );
+    } catch (error) {
+      devKnowledgeStatus.textContent = `Failed: ${(error as Error).message}`;
+      appendOutput(`\n[Dev Tool] strudel_knowledge failed: ${(error as Error).message}\n`);
+    } finally {
+      runDevKnowledge.disabled = false;
+    }
+  });
+  devToggle.addEventListener('change', () => {
+    writeDevFakeUiEnabled(devToggle.checked);
+    bindWorker(settings);
+    void refreshDevScenarioOptions();
+    refreshDevKnowledgeVisibility();
+    appendOutput(`\n[Dev] mock LLM ${devToggle.checked ? 'enabled' : 'disabled'}\n`);
+  });
 
   bindWorker(settings);
   void refreshDevScenarioOptions();
+  refreshDevKnowledgeVisibility();
 
   send.onclick = () => {
     const text = composer.value.trim();
@@ -380,7 +455,9 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
     createLabeledInput('Reasoning mode', mode),
     createLabeledInput('Temperature', tempInput),
     createLabeledInput('API key', apiKeyInput),
+    devToggleLabel,
     devScenarioLabel,
+    devKnowledgeLabel,
   );
 
   container.innerHTML = '';
