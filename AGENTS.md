@@ -3,6 +3,13 @@
 ## Goal
 Build an offline-first, in-browser Strudel REPL experience with a side-tab Jam Agent for real-time music jamming.
 
+Reference docs:
+- `ARCHITECTURE.md`
+- `STRUDEL_KNOWLEDGE_TOOL_SPEC.md`
+- `SYSTEM_PROMT.md`
+- `UIUX.md`
+- `docs/DEV_FAKE_BOUNDARY.md` (dev/fake vs production boundary tracker and removal playbooks)
+
 Hard constraints:
 - Keep `strudel/` as an intact, read-only git submodule.
 - Reuse original Strudel code; do not reimplement Strudel.
