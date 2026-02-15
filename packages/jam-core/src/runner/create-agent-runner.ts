@@ -6,7 +6,7 @@ import { dispatchToolCall } from '../tools/dispatcher';
 import { mapModeToEffort } from './model-profile';
 import { parsePseudoFunctionCalls } from './tool-call-parser';
 import type { AgentRunner, AgentRunnerConfig } from './types';
-import type { ToolResult } from '../tools/contracts';
+import type { ApplyStrudelChangeInput, ToolCall, ToolResult } from '../tools/contracts';
 
 function createIds(now: () => number): { turnId: string; messageId: string } {
   const id = `${now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -118,6 +118,120 @@ function extractApplyToolOutput(result: ToolResult): { status?: string; applyAt?
   };
 }
 
+function extractApplyErrorCode(result: ToolResult): string | undefined {
+  if (!result.output || typeof result.output !== 'object') {
+    return undefined;
+  }
+  const maybe = result.output as { errorCode?: unknown };
+  return typeof maybe.errorCode === 'string' ? maybe.errorCode : undefined;
+}
+
+function buildFailedToolResult(
+  call: ToolCall,
+  now: () => number,
+  message: string,
+): ToolResult {
+  const startedAt = now();
+  const endedAt = startedAt;
+  return {
+    id: call.id,
+    name: call.name,
+    status: 'failed',
+    error: { message },
+    startedAt,
+    endedAt,
+    durationMs: 0,
+  };
+}
+
+function toApplyInput(input: unknown): ApplyStrudelChangeInput | null {
+  if (!input || typeof input !== 'object') {
+    return null;
+  }
+
+  const maybe = input as {
+    currentCode?: unknown;
+    baseHash?: unknown;
+    change?: unknown;
+  };
+
+  let change = maybe.change;
+  if (typeof change === 'string') {
+    try {
+      change = JSON.parse(change) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  if (!change || typeof change !== 'object') {
+    return null;
+  }
+  const parsedChange = change as { kind?: unknown; content?: unknown };
+  if ((parsedChange.kind !== 'patch' && parsedChange.kind !== 'full_code') || typeof parsedChange.content !== 'string') {
+    return null;
+  }
+
+  return {
+    currentCode: typeof maybe.currentCode === 'string' ? maybe.currentCode : '',
+    baseHash: typeof maybe.baseHash === 'string' ? maybe.baseHash : undefined,
+    change: {
+      kind: parsedChange.kind,
+      content: parsedChange.content,
+    },
+  };
+}
+
+interface ReadCodeSnapshot {
+  code: string;
+  hash: string;
+}
+
+function toReadCodeSnapshot(output: unknown): ReadCodeSnapshot | null {
+  if (!output || typeof output !== 'object') {
+    return null;
+  }
+  const maybe = output as { code?: unknown; hash?: unknown };
+  if (typeof maybe.code !== 'string' || typeof maybe.hash !== 'string') {
+    return null;
+  }
+  return { code: maybe.code, hash: maybe.hash };
+}
+
+async function readActiveSnapshot(config: AgentRunnerConfig): Promise<ReadCodeSnapshot | null> {
+  if (!config.readCode) {
+    return null;
+  }
+  const output = await config.readCode({ path: 'active' });
+  return toReadCodeSnapshot(output);
+}
+
+async function normalizeApplyCallInput(
+  call: ToolCall,
+  config: AgentRunnerConfig,
+): Promise<{ call: ToolCall } | { error: string }> {
+  const parsedInput = toApplyInput(call.input);
+  if (!parsedInput) {
+    return { error: 'Invalid apply_strudel_change payload' };
+  }
+
+  const input = parsedInput;
+  if (input.currentCode.trim().length > 0 && input.baseHash && input.baseHash.trim().length > 0) {
+    return { call: { ...call, input } };
+  }
+
+  const snapshot = await readActiveSnapshot(config);
+  if (!snapshot) {
+    return { error: 'Unable to hydrate apply input: active read_code snapshot unavailable.' };
+  }
+
+  const hydrated: ApplyStrudelChangeInput = {
+    ...input,
+    currentCode: input.currentCode.trim().length > 0 ? input.currentCode : snapshot.code,
+    baseHash: input.baseHash && input.baseHash.trim().length > 0 ? input.baseHash : snapshot.hash,
+  };
+  return { call: { ...call, input: hydrated } };
+}
+
 export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
   const listeners = new Set<(event: RunnerEvent) => void>();
   const now = config.now ?? Date.now;
@@ -201,6 +315,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
       let remainingToolBudget = config.globalToolBudget ?? 20;
       let toolRounds = 0;
       let applyOutcome: 'scheduled' | 'applied' | 'rejected' | null = null;
+      let staleBaseRetryUsed = false;
       let forcedFinalAttempted = false;
       let completionReason: 'normal' | 'forced_final' | 'fallback_final' = 'normal';
       let finalContent = '';
@@ -254,8 +369,39 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
           }
           remainingToolBudget -= 1;
 
-          emit({ type: 'tool.call.started', payload: { id: call.id, name: call.name } });
-          const result = await dispatchToolCall(call, {
+          let dispatchCall: ToolCall = call;
+          if (call.name === 'apply_strudel_change') {
+            const normalized = await normalizeApplyCallInput(call, config);
+            if ('error' in normalized) {
+              const failedResult = buildFailedToolResult(call, now, normalized.error);
+              emit({ type: 'tool.call.started', payload: { id: call.id, name: call.name } });
+              emit({
+                type: 'tool.call.completed',
+                payload: {
+                  id: failedResult.id,
+                  name: failedResult.name,
+                  status: failedResult.status,
+                  durationMs: failedResult.durationMs,
+                  request: call.input,
+                  response: failedResult.output,
+                  errorMessage: failedResult.error?.message,
+                },
+              });
+              if (!applyOutcome) {
+                emit({
+                  type: 'apply.status.changed',
+                  payload: { status: 'rejected', reason: failedResult.error?.message || 'apply failed' },
+                });
+                applyOutcome = 'rejected';
+              }
+              toolResults.push(failedResult);
+              continue;
+            }
+            dispatchCall = normalized.call;
+          }
+
+          emit({ type: 'tool.call.started', payload: { id: dispatchCall.id, name: dispatchCall.name } });
+          let result = await dispatchToolCall(dispatchCall, {
             now,
             readCode: config.readCode,
             applyStrudelChange: config.applyStrudelChange,
@@ -264,15 +410,95 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
           emit({
             type: 'tool.call.completed',
             payload: {
-              id: result.id,
-              name: result.name,
+              id: dispatchCall.id,
+              name: dispatchCall.name,
               status: result.status,
               durationMs: result.durationMs,
-              request: call.input,
+              request: dispatchCall.input,
               response: result.output,
               errorMessage: result.error?.message,
             },
           });
+          toolResults.push(result);
+
+          if (
+            call.name === 'apply_strudel_change' &&
+            !staleBaseRetryUsed &&
+            extractApplyErrorCode(result) === 'STALE_BASE_HASH'
+          ) {
+            staleBaseRetryUsed = true;
+            if (remainingToolBudget > 0) {
+              remainingToolBudget -= 1;
+              const retrySnapshot = await readActiveSnapshot(config);
+              if (!retrySnapshot) {
+                const retryCall: ToolCall = { ...dispatchCall, id: `${dispatchCall.id}:stale-retry` };
+                result = buildFailedToolResult(
+                  retryCall,
+                  now,
+                  'STALE_BASE_HASH retry failed: unable to refresh active code snapshot.',
+                );
+                emit({ type: 'tool.call.started', payload: { id: retryCall.id, name: retryCall.name } });
+                emit({
+                  type: 'tool.call.completed',
+                  payload: {
+                    id: retryCall.id,
+                    name: retryCall.name,
+                    status: result.status,
+                    durationMs: result.durationMs,
+                    request: retryCall.input,
+                    response: result.output,
+                    errorMessage: result.error?.message,
+                  },
+                });
+              } else {
+                const parsedRetryInput = toApplyInput(dispatchCall.input);
+                if (!parsedRetryInput) {
+                  const retryCall: ToolCall = { ...dispatchCall, id: `${dispatchCall.id}:stale-retry` };
+                  result = buildFailedToolResult(retryCall, now, 'STALE_BASE_HASH retry failed: invalid apply payload.');
+                  emit({ type: 'tool.call.started', payload: { id: retryCall.id, name: retryCall.name } });
+                  emit({
+                    type: 'tool.call.completed',
+                    payload: {
+                      id: retryCall.id,
+                      name: retryCall.name,
+                      status: result.status,
+                      durationMs: result.durationMs,
+                      request: retryCall.input,
+                      response: result.output,
+                      errorMessage: result.error?.message,
+                    },
+                  });
+                } else {
+                const retryInput: ApplyStrudelChangeInput = {
+                  ...parsedRetryInput,
+                  currentCode: retrySnapshot.code,
+                  baseHash: retrySnapshot.hash,
+                };
+                const retryCall: ToolCall = { ...dispatchCall, id: `${dispatchCall.id}:stale-retry`, input: retryInput };
+                emit({ type: 'tool.call.started', payload: { id: retryCall.id, name: retryCall.name } });
+                result = await dispatchToolCall(retryCall, {
+                  now,
+                  readCode: config.readCode,
+                  applyStrudelChange: config.applyStrudelChange,
+                  knowledgeSources: config.knowledgeSources,
+                });
+                emit({
+                  type: 'tool.call.completed',
+                  payload: {
+                    id: retryCall.id,
+                    name: retryCall.name,
+                    status: result.status,
+                    durationMs: result.durationMs,
+                    request: retryCall.input,
+                    response: result.output,
+                    errorMessage: result.error?.message,
+                  },
+                });
+                }
+              }
+              toolResults.push(result);
+            }
+          }
 
           if (call.name === 'apply_strudel_change' && !applyOutcome) {
             if (result.status === 'failed') {
@@ -299,7 +525,6 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
             }
           }
 
-          toolResults.push(result);
         }
 
         if (finalContent) {
