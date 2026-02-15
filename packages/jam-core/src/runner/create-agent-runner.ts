@@ -147,18 +147,61 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
         ? `User request:\n${text}`
         : `[runtime_context]\n${JSON.stringify(makeContextEnvelope(config))}\n[/runtime_context]\n\nUser request:\n${text}`;
 
-      const initialResponse = await callModel(abortController.signal, [
+      const maxToolRoundsPerTurn = 4;
+      let remainingToolBudget = config.globalToolBudget ?? 20;
+      let toolRounds = 0;
+      let applyOutcome: 'scheduled' | 'applied' | 'rejected' | null = null;
+      let forcedFinalAttempted = false;
+      let finalContent = '';
+      let lastToolResults: unknown[] = [];
+
+      let response = await callModel(abortController.signal, [
         { role: 'system', content: prompt.prompt },
         { role: 'user', content: contextualUserText },
       ]);
 
-      const parsedInitial = parsePseudoFunctionCalls(initialResponse);
-      let finalContent = parsedInitial.cleanedText;
-      let applyOutcome: 'scheduled' | 'applied' | 'rejected' | null = null;
+      while (true) {
+        const parsed = parsePseudoFunctionCalls(response);
+        const cleaned = parsed.cleanedText.trim();
 
-      if (parsedInitial.calls.length > 0) {
+        if (parsed.calls.length === 0) {
+          if (toolRounds > 0 && !isSufficientPostToolResponse(cleaned) && !forcedFinalAttempted) {
+            forcedFinalAttempted = true;
+            response = await callModel(abortController.signal, [
+              { role: 'system', content: prompt.prompt },
+              { role: 'user', content: contextualUserText },
+              {
+                role: 'assistant',
+                content: cleaned || 'I used tools to inspect and prepare a response.',
+              },
+              {
+                role: 'user',
+                content:
+                  `Tool results:\n${formatToolResults(lastToolResults)}\n\n` +
+                  'Your previous answer was empty. Respond now with final user-facing Strudel guidance only. No tool tags.',
+              },
+            ]);
+            continue;
+          }
+
+          finalContent = cleaned;
+          break;
+        }
+
+        if (toolRounds >= maxToolRoundsPerTurn) {
+          finalContent = 'Stopped after maximum tool rounds. Try a narrower request.';
+          break;
+        }
+        toolRounds += 1;
+
         const toolResults: unknown[] = [];
-        for (const call of parsedInitial.calls) {
+        for (const call of parsed.calls) {
+          if (remainingToolBudget <= 0) {
+            finalContent = 'Stopped after exhausting tool budget. Try a narrower request.';
+            break;
+          }
+          remainingToolBudget -= 1;
+
           emit({ type: 'tool.call.started', payload: { id: call.id, name: call.name } });
           const result = await dispatchToolCall(call, {
             now,
@@ -207,50 +250,25 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
           toolResults.push(result);
         }
 
-        let followUpCleaned = '';
-        try {
-          const followUpResponse = await callModel(abortController.signal, [
-            { role: 'system', content: prompt.prompt },
-            { role: 'user', content: contextualUserText },
-            {
-              role: 'assistant',
-              content: parsedInitial.cleanedText || 'I used tools to inspect and prepare a response.',
-            },
-            {
-              role: 'user',
-              content:
-                `Tool results:\n${formatToolResults(toolResults)}\n\n` +
-                'Provide the final user-facing response. Do not output <function_calls> tags.',
-            },
-          ]);
-
-          const followUpParsed = parsePseudoFunctionCalls(followUpResponse);
-          followUpCleaned = followUpParsed.cleanedText.trim();
-
-          if (!isSufficientPostToolResponse(followUpCleaned)) {
-            const forcedFinalResponse = await callModel(abortController.signal, [
-              { role: 'system', content: prompt.prompt },
-              { role: 'user', content: contextualUserText },
-              {
-                role: 'assistant',
-                content: parsedInitial.cleanedText || 'I used tools to inspect and prepare a response.',
-              },
-              {
-                role: 'user',
-                content:
-                  `Tool results:\n${formatToolResults(toolResults)}\n\n` +
-                  'Your previous answer was empty. Respond now with final user-facing Strudel guidance only. No tool tags.',
-              },
-            ]);
-            followUpCleaned = parsePseudoFunctionCalls(forcedFinalResponse).cleanedText.trim();
-          }
-        } catch {
-          followUpCleaned = '';
+        if (finalContent) {
+          break;
         }
+        lastToolResults = toolResults;
 
-        finalContent =
-          (isSufficientPostToolResponse(followUpCleaned) ? followUpCleaned : '') ||
-          'I inspected the current code and ran required tools.';
+        response = await callModel(abortController.signal, [
+          { role: 'system', content: prompt.prompt },
+          { role: 'user', content: contextualUserText },
+          {
+            role: 'assistant',
+            content: cleaned || 'I used tools to inspect and prepare a response.',
+          },
+          {
+            role: 'user',
+            content:
+              `Tool results:\n${formatToolResults(toolResults)}\n\n` +
+              'Provide the final user-facing response. Do not output <function_calls> tags.',
+          },
+        ]);
       }
 
       if (!finalContent.trim()) {

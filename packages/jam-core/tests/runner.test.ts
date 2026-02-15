@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAgentRunner } from '../src/runner/create-agent-runner';
+import { createFakeListCompletionClient } from '../src/llm/fake-list/adapter';
+import { getFakeScenario } from '../src/llm/fake-list/scenario';
 
 function mockCompletionResponse(content: string): Response {
   return new Response(
@@ -17,6 +19,88 @@ function mockCompletionResponse(content: string): Response {
 }
 
 describe('agent runner', () => {
+  it('supports injected completion client for deterministic runs', async () => {
+    const runner = createAgentRunner({
+      settings: {
+        schemaVersion: 1,
+        provider: 'openrouter',
+        model: 'moonshotai/kimi-k2.5',
+        reasoningEnabled: true,
+        reasoningMode: 'balanced',
+        temperature: 0.2,
+        apiKey: 'k',
+      },
+      completionClient: createFakeListCompletionClient({
+        name: 'deterministic-inline',
+        steps: [
+          {
+            id: 'inline-code',
+            response: '```javascript\nsetcpm(120/4)\nstack(s("bd*4"), s("hh*8"))\n```',
+          },
+        ],
+      }),
+      readCode: async () => ({ code: 's("bd")' }),
+      applyStrudelChange: async () => ({ status: 'scheduled', applyAt: '2026-02-15T00:00:00.000Z' }),
+      now: () => 100,
+    });
+
+    const deltas: string[] = [];
+    runner.subscribeToEvents((event) => {
+      if (event.type === 'assistant.stream.delta') {
+        deltas.push(event.payload.delta);
+      }
+    });
+
+    await runner.sendUserMessage('give me a techno beat');
+    expect(deltas.join('')).toContain('setcpm(120/4)');
+  });
+
+  it('executes explicit read and apply tool calls across multiple model rounds', async () => {
+    const readMock = vi.fn().mockResolvedValue({ path: 'active', code: 's("bd")', lineCount: 1 });
+    const applyMock = vi.fn().mockResolvedValue({ status: 'scheduled', applyAt: '2026-02-15T00:00:00.000Z' });
+
+    const runner = createAgentRunner({
+      settings: {
+        schemaVersion: 1,
+        provider: 'openrouter',
+        model: 'moonshotai/kimi-k2.5',
+        reasoningEnabled: true,
+        reasoningMode: 'balanced',
+        temperature: 0.2,
+        apiKey: 'k',
+      },
+      completionClient: createFakeListCompletionClient(getFakeScenario('read_then_apply_success')),
+      readCode: readMock,
+      applyStrudelChange: applyMock,
+      now: () => 100,
+    });
+
+    const completedTools: string[] = [];
+    const applyStatuses: string[] = [];
+    const deltas: string[] = [];
+
+    runner.subscribeToEvents((event) => {
+      if (event.type === 'tool.call.completed') {
+        completedTools.push(event.payload.name);
+      }
+      if (event.type === 'apply.status.changed') {
+        applyStatuses.push(event.payload.status);
+      }
+      if (event.type === 'assistant.stream.delta') {
+        deltas.push(event.payload.delta);
+      }
+    });
+
+    await runner.sendUserMessage('give me a techno beat');
+
+    expect(completedTools).toContain('read_code');
+    expect(completedTools).toContain('apply_strudel_change');
+    expect(readMock).toHaveBeenCalledTimes(1);
+    expect(applyMock).toHaveBeenCalledTimes(1);
+    expect(applyStatuses).toContain('scheduled');
+    expect(deltas.join('')).toContain('cp*2');
+  });
+
   it('emits delta then completion in order', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       mockCompletionResponse('a'),
@@ -170,13 +254,10 @@ describe('agent runner', () => {
     expect(final).not.toContain("I'll check the current code state first.");
   });
 
-  it('auto-runs read_code when initial answer is planning-only without tool tags', async () => {
+  it('does not auto-run read_code when initial answer is planning-only without tool tags', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        mockCompletionResponse("I'll check the current state first, then propose a beat."),
-      )
-      .mockResolvedValueOnce(mockCompletionResponse('Use this: stack(s("bd*4"), s("~ hh ~ hh"))'));
+      .mockResolvedValueOnce(mockCompletionResponse("I'll check the current state first, then propose a beat."));
     vi.stubGlobal('fetch', fetchMock);
 
     const runner = createAgentRunner({
@@ -203,21 +284,18 @@ describe('agent runner', () => {
     });
 
     await runner.sendUserMessage('make beat');
-    expect(events).toContain('tool.call.started');
-    expect(events).toContain('tool.call.completed');
-    expect(deltas.join('')).toContain('Use this:');
+    expect(events).not.toContain('tool.call.started');
+    expect(events).not.toContain('tool.call.completed');
+    expect(deltas.join('')).toContain("I'll check the current state first");
   });
 
-  it('forces code-block generation before auto-apply when response has no code block', async () => {
+  it('does not auto-apply when assistant returns code block without apply tool call', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        mockCompletionResponse("I'll inspect current code first."),
-      )
-      .mockResolvedValueOnce(mockCompletionResponse('Current code is minimal. I will expand it.'))
       .mockResolvedValueOnce(mockCompletionResponse('```javascript\nstack(s("bd*4"), s("~ hh ~ hh"))\n```'));
     vi.stubGlobal('fetch', fetchMock);
 
+    const applyMock = vi.fn().mockResolvedValue({ status: 'scheduled', applyAt: '2026-02-14T00:00:00.000Z' });
     const runner = createAgentRunner({
       settings: {
         schemaVersion: 1,
@@ -229,7 +307,7 @@ describe('agent runner', () => {
         apiKey: 'k',
       },
       readCode: async () => ({ code: 's(\"bd\")', lineCount: 1 }),
-      applyStrudelChange: async () => ({ status: 'scheduled', applyAt: '2026-02-14T00:00:00.000Z' }),
+      applyStrudelChange: applyMock,
       now: () => 100,
     });
 
@@ -243,11 +321,12 @@ describe('agent runner', () => {
     });
 
     await runner.sendUserMessage('make techno beat');
-    expect(events).toContain('apply.status.changed');
-    expect(deltas.join('')).toContain('Apply status: scheduled');
+    expect(applyMock).not.toHaveBeenCalled();
+    expect(events).not.toContain('apply.status.changed');
+    expect(deltas.join('')).toContain('stack(s("bd*4"), s("~ hh ~ hh"))');
   });
 
-  it('emits missing_apply outcome when jam request does not produce apply', async () => {
+  it('does not emit apply status when jam request has no explicit apply tool call', async () => {
     const fetchMock = vi.fn().mockResolvedValue(mockCompletionResponse('Some analysis only, no code block.'));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -275,11 +354,11 @@ describe('agent runner', () => {
     });
 
     await runner.sendUserMessage('give me a techno beat');
-    expect(events).toContain('apply.status.changed');
-    expect(deltas.join('')).toContain('Apply status: missing_apply');
+    expect(events).not.toContain('apply.status.changed');
+    expect(deltas.join('')).toContain('Some analysis only, no code block.');
   });
 
-  it('maps failed direct apply tool call to rejected instead of missing_apply', async () => {
+  it('maps failed direct apply tool call to rejected', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -316,8 +395,7 @@ describe('agent runner', () => {
 
     await runner.sendUserMessage('give me a techno beat');
     expect(applyStatuses.some((entry) => entry.status === 'rejected')).toBe(true);
-    expect(applyStatuses.some((entry) => entry.status === 'missing_apply')).toBe(false);
-    expect(deltas.join('')).not.toContain('Apply status: missing_apply');
+    expect(deltas.join('')).toContain('Attempted apply and got validation feedback.');
   });
 
   it('clears stored conversation context on resetContext', async () => {
