@@ -3,11 +3,10 @@ import { loadSettings, saveSettings } from '@chatrave/storage-local';
 import { registerAgentTabRenderer } from '@chatrave/strudel-adapter';
 import { createRunnerWorkerClient, type AgentHostContext } from './worker-client';
 import {
-  buildScenariosUrl,
   clearMockRuntimeOverrides,
   enableMockRuntimeDefaults,
+  getRuntimeScenarios,
   isDevFakeUiEnabled,
-  readRuntimeOverrides,
   readRuntimeScenario,
   writeDevFakeUiEnabled,
   writeRuntimeScenario,
@@ -170,7 +169,6 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
   let settings = loadSettings();
   let worker = createRunnerWorkerClient(settings, hostContext);
   let unsubscribeWorker: (() => void) | null = null;
-  let runtimeOverrides = readRuntimeOverrides();
   let lastUserTextForTurn = '';
   let activeAssistantIdByTurn = new Map<string, string>();
   let pendingLogsByTurn = new Map<string, ToolLogView[]>();
@@ -801,7 +799,6 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
 
   const bindWorker = (nextSettings: AgentSettings): void => {
     unsubscribeWorker?.();
-    runtimeOverrides = readRuntimeOverrides();
     worker = createRunnerWorkerClient(nextSettings, hostContext);
     unsubscribeWorker = worker.subscribe(handleWorkerEvent);
   };
@@ -836,7 +833,6 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
   };
 
   const refreshDevScenarioOptions = async () => {
-    const baseUrl = readRuntimeOverrides().openRouterBaseUrl;
     const currentScenario = readRuntimeScenario();
     if (!isDevFakeUiEnabled()) {
       devScenarioLabel.style.display = 'none';
@@ -848,14 +844,7 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
     setScenarioOptions([], currentScenario);
 
     try {
-      const response = await fetch(buildScenariosUrl(baseUrl ?? 'http://localhost:8787/api/v1'));
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const data = (await response.json()) as { scenarios?: unknown };
-      const scenarios = Array.isArray(data.scenarios)
-        ? data.scenarios.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-        : [];
+      const scenarios = getRuntimeScenarios();
       setScenarioOptions(scenarios, currentScenario);
       devScenarioStatus.textContent = currentScenario ? `Using scenario: ${currentScenario}` : 'Using scenario: none';
     } catch (error) {

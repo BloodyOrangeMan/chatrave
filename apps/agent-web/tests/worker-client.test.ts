@@ -2,8 +2,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentSettings } from '@chatrave/shared-types';
 
-const { createAgentRunnerMock } = vi.hoisted(() => ({
-  createAgentRunnerMock: vi.fn(),
+const { createAgentSessionMock } = vi.hoisted(() => ({
+  createAgentSessionMock: vi.fn(),
 }));
 
 vi.mock('@strudel/transpiler/transpiler.mjs', () => ({
@@ -24,8 +24,8 @@ vi.mock('@strudel/transpiler/transpiler.mjs', () => ({
   },
 }));
 
-vi.mock('@chatrave/jam-core', () => ({
-  createAgentRunner: createAgentRunnerMock,
+vi.mock('@chatrave/agent-core', () => ({
+  createAgentSession: createAgentSessionMock,
 }));
 
 const { createRunnerWorkerClient } = await import('../src/worker-client');
@@ -56,7 +56,10 @@ function setupCapturedApply(
   options?: { soundsAvailable?: string[]; exposeSoundMap?: boolean },
 ): {
   apply: (
-    input: { baseHash: string; change: { kind: 'patch' | 'full_code'; content: string } },
+    input:
+      | { baseHash: string; change: { kind: 'full_code'; content: string } }
+      | { baseHash: string; change: { kind: 'search_replace'; search: string; replace: string; occurrence?: 'single' | 'all' } }
+      | { baseHash: string; change: { kind: 'patch'; content: string } },
   ) => Promise<
     | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
     | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] }
@@ -73,14 +76,17 @@ function setupCapturedApply(
   };
   let capturedApply:
     | ((
-        input: { baseHash: string; change: { kind: 'patch' | 'full_code'; content: string } },
+        input:
+          | { baseHash: string; change: { kind: 'full_code'; content: string } }
+          | { baseHash: string; change: { kind: 'search_replace'; search: string; replace: string; occurrence?: 'single' | 'all' } }
+          | { baseHash: string; change: { kind: 'patch'; content: string } },
       ) => Promise<
         | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
         | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] }
       >)
     | undefined;
 
-  createAgentRunnerMock.mockImplementation((config: { applyStrudelChange: typeof capturedApply }) => {
+  createAgentSessionMock.mockImplementation((config: { applyStrudelChange: typeof capturedApply }) => {
     capturedApply = config.applyStrudelChange;
     return {
       sendUserMessage: vi.fn().mockResolvedValue({ turnId: 't', messageId: 'm' }),
@@ -163,21 +169,56 @@ describe('worker-client apply validation', () => {
     expect(result.diagnostics?.[0]).toContain('Unexpected end of input');
   });
 
-  it('rejects invalid patch content before scheduling', async () => {
+  it('rejects deprecated patch kind before scheduling', async () => {
     const { apply, editor, getBaseHash } = setupCapturedApply('s("bd")');
-    const brokenPatch = `stack(
-  s("hh*8")
-  s("cp*2")
-)`;
-
-    const result = await apply({ baseHash: getBaseHash(), change: { kind: 'patch', content: brokenPatch } });
+    const result = await apply({ baseHash: getBaseHash(), change: { kind: 'patch', content: 's("hh")' } });
     expect(result.status).toBe('rejected');
     if (result.status !== 'rejected') {
       throw new Error('Expected rejected result');
     }
     expect(result.phase).toBe('validate');
+    expect(result.diagnostics?.[0]).toContain('patch is deprecated');
     expect(editor.code).toBe('s("bd")');
     expect(editor.setCode).not.toHaveBeenCalled();
+  });
+
+  it('applies search_replace when exactly one match exists', async () => {
+    const original = 'stack(s("bd*4"), s("hh*8"))';
+    const { apply, editor, handleEvaluate, getBaseHash } = setupCapturedApply(original);
+    const result = await apply({
+      baseHash: getBaseHash(),
+      change: {
+        kind: 'search_replace',
+        search: 's("hh*8")',
+        replace: 's("hh*16")',
+      },
+    });
+
+    expect(result.status).toBe('scheduled');
+    vi.advanceTimersByTime(1000);
+    expect(editor.code).toContain('hh*16');
+    expect(editor.setCode).toHaveBeenCalled();
+    expect(handleEvaluate).toHaveBeenCalled();
+  });
+
+  it('rejects search_replace with ambiguous single-match replacement', async () => {
+    const original = 'stack(s("hh"), s("hh"), s("bd"))';
+    const { apply, editor, getBaseHash } = setupCapturedApply(original);
+    const result = await apply({
+      baseHash: getBaseHash(),
+      change: {
+        kind: 'search_replace',
+        search: 's("hh")',
+        replace: 's("cp")',
+      },
+    });
+    expect(result.status).toBe('rejected');
+    if (result.status !== 'rejected') {
+      throw new Error('Expected rejected result');
+    }
+    expect(result.phase).toBe('validate');
+    expect(result.diagnostics?.[0]).toContain('expected single match');
+    expect(editor.code).toBe(original);
   });
 
   it('extracts unknownSymbols from dry-run failures', async () => {

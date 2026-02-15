@@ -1,8 +1,13 @@
+import { getAvailableMockScenarios } from '@chatrave/agent-core';
+
 export const BASE_URL_KEY = 'chatraveOpenRouterBaseUrl';
 export const SCENARIO_KEY = 'chatraveMockLlmScenario';
 export const DEV_FAKE_UI_KEY = 'chatraveDevFakeUiEnabled';
+export const DEFAULT_MOCK_BASE_URL = 'local://mock';
 
 export interface RuntimeOverrides {
+  mockEnabled: boolean;
+  mockScenario?: string;
   openRouterBaseUrl?: string;
   openRouterExtraHeaders?: Record<string, string>;
 }
@@ -24,7 +29,7 @@ function writeLocalStorageValue(key: string, value?: string): void {
       window.localStorage.removeItem(key);
     }
   } catch {
-    // Ignore storage write failures.
+    // ignore storage write failures
   }
 }
 
@@ -45,31 +50,36 @@ export function writeDevFakeUiEnabled(enabled: boolean): void {
   writeLocalStorageValue(DEV_FAKE_UI_KEY, enabled ? 'true' : undefined);
 }
 
-export function isLocalDevBaseUrl(baseUrl?: string): boolean {
-  if (!baseUrl) {
-    return false;
-  }
-  try {
-    const parsed = new URL(baseUrl);
-    return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-  } catch {
-    return false;
+export function clearMockRuntimeOverrides(): void {
+  writeRuntimeScenario(undefined);
+}
+
+export function enableMockRuntimeDefaults(): void {
+  if (!readRuntimeScenario()) {
+    writeRuntimeScenario(getAvailableMockScenarios()[0]);
   }
 }
 
-export function buildScenariosUrl(baseUrl: string): string {
-  const normalized = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-  return `${normalized}/scenarios`;
+export function getRuntimeScenarios(): string[] {
+  return getAvailableMockScenarios();
+}
+
+export function buildScenariosUrl(_baseUrl: string): string {
+  return 'local://mock-scenarios';
+}
+
+export function isLocalDevBaseUrl(baseUrl?: string): boolean {
+  return Boolean(baseUrl) && (!!baseUrl?.startsWith('http://localhost') || !!baseUrl?.startsWith('http://127.0.0.1'));
 }
 
 export function readRuntimeOverrides(): RuntimeOverrides {
-  const baseUrl = readLocalStorageValue(BASE_URL_KEY);
-  const scenario = readLocalStorageValue(SCENARIO_KEY);
-  if (!baseUrl) {
-    return {};
+  if (!isDevFakeUiEnabled()) {
+    return { mockEnabled: false };
   }
   return {
-    openRouterBaseUrl: baseUrl,
-    openRouterExtraHeaders: isDevFakeUiEnabled() && scenario ? { 'x-chatrave-mock-scenario': scenario } : undefined,
+    mockEnabled: true,
+    mockScenario: readRuntimeScenario(),
+    openRouterBaseUrl: DEFAULT_MOCK_BASE_URL,
+    openRouterExtraHeaders: readRuntimeScenario() ? { 'x-chatrave-mock-scenario': readRuntimeScenario() as string } : undefined,
   };
 }
