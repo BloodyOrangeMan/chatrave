@@ -74,6 +74,70 @@ const builtins = {
     { response: 'That sound is invalid in this environment. I kept the current groove unchanged.' },
   ],
   jam_missing_apply_no_code: [{ response: 'I analyzed the groove and recommend adding hats and syncopated claps.' }],
+  multi_turn_apply_repair_with_knowledge: [
+    {
+      id: 'turn1-apply-initial',
+      response: 'Applying a minimal groove to start.',
+      toolCalls: [
+        {
+          name: 'apply_strudel_change',
+          args: {
+            baseHash: 'fnv1a-811c9dc5',
+            change: {
+              kind: 'full_code',
+              content: 'setcpm(120/4)\nstack(s("bd*4"), s("hh*8"))',
+            },
+          },
+        },
+      ],
+    },
+    { id: 'turn1-final', response: 'Groove started. Kick and hats are stable at setcpm(120/4).' },
+    {
+      id: 'turn2-apply-bad',
+      response: 'Applying clap + texture layer.',
+      toolCalls: [
+        {
+          name: 'apply_strudel_change',
+          args: {
+            baseHash: 'fnv1a-1de70543',
+            change: {
+              kind: 'full_code',
+              content: 'setcpm(120/4)\nstack(s("bd*4"), s("hh*8"), s("definitely_not_a_sound"))',
+            },
+          },
+        },
+      ],
+    },
+    {
+      id: 'turn2-knowledge',
+      response: 'Checking Strudel sound knowledge for a safe replacement.',
+      toolCalls: [
+        {
+          name: 'strudel_knowledge',
+          args: {
+            query: 'definitely_not_a_sound replacement clap',
+          },
+        },
+      ],
+    },
+    {
+      id: 'turn2-apply-repaired',
+      response: 'Applying repaired pattern with known clap sample.',
+      toolCalls: [
+        {
+          name: 'apply_strudel_change',
+          args: {
+            baseHash: 'fnv1a-1de70543',
+            change: {
+              kind: 'full_code',
+              content: 'setcpm(120/4)\nstack(s("bd*4"), s("hh*8"), s("cp*2"))',
+            },
+          },
+        },
+      ],
+    },
+    { id: 'turn2-final', response: 'Repair applied. Groove stays stable and clap layer is active.' },
+  ],
   malformed_tool_tags: [
     {
       response:
@@ -84,6 +148,7 @@ const builtins = {
   http_502_once: [{ error: 'HTTP_502' }],
   invalid_json_once: [{ error: 'INVALID_JSON' }],
 };
+const scenarioState = new Map();
 
 function toLcMessage(message) {
   if (message?.role === 'assistant') return new AIMessage(message?.content ?? '');
@@ -149,11 +214,16 @@ function hasToolResult(latestUser, toolName) {
   return latestUser.includes(`"name": "${toolName}"`) || latestUser.includes(`"name":"${toolName}"`);
 }
 
+function hasToolOutputField(latestUser, field, value) {
+  return latestUser.includes(`"${field}": "${value}"`) || latestUser.includes(`"${field}":"${value}"`);
+}
+
 function pickStep(name, messages) {
   const steps = builtins[name];
   if (!steps) {
     throw new Error(`Unknown mock scenario: ${name}`);
   }
+  const state = scenarioState.get(name) || { multiTurnPhase: 0 };
 
   if (steps.length <= 1) {
     return steps[0];
@@ -161,6 +231,32 @@ function pickStep(name, messages) {
 
   const latestUser = getLatestUserMessageContent(messages);
   const hasToolResults = latestUser.includes('Tool results:');
+  if (name === 'multi_turn_apply_repair_with_knowledge') {
+    if (!hasToolResults) {
+      if (state.multiTurnPhase >= 2) {
+        state.multiTurnPhase = 0;
+      }
+      scenarioState.set(name, state);
+      return state.multiTurnPhase === 0 ? steps[0] : steps[2];
+    }
+    if (hasToolResult(latestUser, 'strudel_knowledge')) {
+      return steps[4];
+    }
+    if (
+      hasToolResult(latestUser, 'apply_strudel_change') &&
+      hasToolOutputField(latestUser, 'errorCode', 'UNKNOWN_SOUND')
+    ) {
+      return steps[3];
+    }
+    if (
+      hasToolResult(latestUser, 'apply_strudel_change') &&
+      (hasToolOutputField(latestUser, 'status', 'scheduled') || hasToolOutputField(latestUser, 'status', 'applied'))
+    ) {
+      return state.multiTurnPhase === 0 ? steps[1] : steps[5];
+    }
+    return state.multiTurnPhase === 0 ? steps[1] : steps[5];
+  }
+
   if (!hasToolResults) {
     return steps[0];
   }
@@ -213,6 +309,16 @@ async function generateResponse(messages, scenarioName) {
   const text = [step?.response ?? '', renderedCalls].filter(Boolean).join('\n');
   const model = new FakeListChatModel({ responses: [text] });
   const output = await model.invoke((messages ?? []).map(toLcMessage));
+  if (scenarioName === 'multi_turn_apply_repair_with_knowledge') {
+    const state = scenarioState.get(scenarioName) || { multiTurnPhase: 0 };
+    if (step?.id === 'turn1-final') {
+      state.multiTurnPhase = 1;
+      scenarioState.set(scenarioName, state);
+    } else if (step?.id === 'turn2-final') {
+      state.multiTurnPhase = 2;
+      scenarioState.set(scenarioName, state);
+    }
+  }
   if (typeof output?.content === 'string') return output.content;
   if (Array.isArray(output?.content)) {
     return output.content
