@@ -1,5 +1,6 @@
 import { createAgentRunner } from '@chatrave/jam-core';
 import type { AgentSettings, ReplSnapshot, RunnerEvent } from '@chatrave/shared-types';
+import { transpiler } from '@strudel/transpiler';
 
 export interface AgentHostContext {
   started?: boolean;
@@ -15,6 +16,10 @@ export interface RunnerWorkerClient {
   resetContext(options?: { omitRuntimeContext?: boolean }): void;
   subscribe(listener: (event: RunnerEvent) => void): () => void;
 }
+
+type HostApplyResult =
+  | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
+  | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] };
 
 function hashString(input: string): string {
   let hash = 2166136261;
@@ -79,7 +84,7 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
 
   const applyStrudelChange = async (input: {
     change: { kind: 'patch' | 'full_code'; content: string };
-  }): Promise<{ status: 'scheduled' | 'applied'; applyAt?: string }> => {
+  }): Promise<HostApplyResult> => {
     const editor = hostContext?.editorRef?.current;
     if (!editor) {
       throw new Error('Editor context unavailable');
@@ -89,6 +94,16 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
       input.change.kind === 'full_code'
         ? input.change.content
         : `${editor.code ?? ''}\n${input.change.content}`;
+
+    const dryRun = dryRunValidateChange(nextCode);
+    if (!dryRun.ok) {
+      return {
+        status: 'rejected',
+        phase: 'validate',
+        diagnostics: dryRun.diagnostics,
+        unknownSymbols: dryRun.unknownSymbols,
+      };
+    }
 
     const cps = editor.repl?.scheduler?.cps ?? 0.5;
     const cycleMs = Math.max(250, Math.round((1 / Math.max(0.1, cps)) * 1000));
@@ -160,3 +175,21 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
     },
   };
 }
+  const dryRunValidateChange = (
+    code: string,
+  ): { ok: true } | { ok: false; diagnostics: string[]; unknownSymbols: string[] } => {
+    try {
+      transpiler(code, { id: 'chatrave-shadow-dry-run' });
+      return { ok: true };
+    } catch (error) {
+      const message = (error as Error).message || String(error);
+      const unknownSymbols = /is not defined/i.test(message)
+        ? [message.match(/([A-Za-z_][A-Za-z0-9_]*) is not defined/i)?.[1] ?? 'unknown']
+        : [];
+      return {
+        ok: false,
+        diagnostics: [`DRY_RUN_VALIDATE_FAILED: ${message}`],
+        unknownSymbols,
+      };
+    }
+  };

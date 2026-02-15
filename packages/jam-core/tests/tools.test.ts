@@ -35,6 +35,34 @@ describe('tool dispatcher', () => {
     expect(output.phase).toBe('STALE_BASE_HASH');
   });
 
+  it('preserves rejected host apply diagnostics', async () => {
+    const currentCode = 's("bd")';
+    const result = await dispatchToolCall(
+      {
+        id: '1c',
+        name: 'apply_strudel_change',
+        input: {
+          currentCode,
+          baseHash: hashString(currentCode),
+          change: { kind: 'full_code', content: 'stack(s("bd"), s("hh"))' },
+        },
+      },
+      {
+        applyStrudelChange: async () => ({
+          status: 'rejected',
+          phase: 'validate',
+          diagnostics: ['DRY_RUN_VALIDATE_FAILED: Unexpected token'],
+          unknownSymbols: [],
+        }),
+      },
+    );
+
+    const output = result.output as { status: string; phase?: string; diagnostics?: string[] };
+    expect(output.status).toBe('rejected');
+    expect(output.phase).toBe('validate');
+    expect(output.diagnostics?.[0]).toContain('DRY_RUN_VALIDATE_FAILED');
+  });
+
   it('finds reference knowledge by exact match', async () => {
     const result = await dispatchToolCall(
       {

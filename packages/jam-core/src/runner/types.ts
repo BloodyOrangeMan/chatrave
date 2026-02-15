@@ -19,7 +19,10 @@ export interface AgentRunnerConfig {
   readCode?: (input: ReadCodeInput) => Promise<unknown>;
   applyStrudelChange?: (
     input: ApplyStrudelChangeInput,
-  ) => Promise<{ status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }>;
+  ) => Promise<
+    | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
+    | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] }
+  >;
   knowledgeSources?: KnowledgeSources;
   now?: () => number;
 }

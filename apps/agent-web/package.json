@@ -8,7 +8,8 @@
     "@chatrave/jam-core": "workspace:*",
     "@chatrave/shared-types": "workspace:*",
     "@chatrave/storage-local": "workspace:*",
-    "@chatrave/strudel-adapter": "workspace:*"
+    "@chatrave/strudel-adapter": "workspace:*",
+    "@strudel/transpiler": "^1.0.4"
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 4174",

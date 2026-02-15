@@ -8,7 +8,10 @@ type ApplyResult = ReturnType<typeof toApplyScheduled> | ReturnType<typeof toApp
 export interface ApplyExecutionContext {
   applyStrudelChange?: (
     input: ApplyStrudelChangeInput,
-  ) => Promise<{ status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }>;
+  ) => Promise<
+    | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
+    | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] }
+  >;
 }
 
 export async function executeApplyStrudelChange(
@@ -25,6 +28,13 @@ export async function executeApplyStrudelChange(
   if (context.applyStrudelChange) {
     try {
       const result = await context.applyStrudelChange(input);
+      if (result.status === 'rejected') {
+        return toApplyRejected(
+          result.phase ?? 'validate',
+          result.diagnostics ?? ['apply rejected'],
+          result.unknownSymbols ?? [],
+        );
+      }
       return toApplyScheduled(result.applyAt ?? new Date().toISOString());
     } catch (error) {
       return toApplyRejected('execute', [(error as Error).message], []);
