@@ -23,7 +23,7 @@ type HostApplyResult =
 
 const dryRunValidateChange = (
   code: string,
-): { ok: true } | { ok: false; diagnostics: string[]; unknownSymbols: string[] } => {
+): { ok: true } | { ok: false; diagnostics: string[] } => {
   try {
     transpiler(code, { id: 'chatrave-shadow-dry-run' });
     return { ok: true };
@@ -33,7 +33,6 @@ const dryRunValidateChange = (
       ok: false,
       // Keep Strudel transpiler error text unmodified for maximum fidelity.
       diagnostics: [message],
-      unknownSymbols: [],
     };
   }
 };
@@ -118,7 +117,6 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
         status: 'rejected',
         phase: 'validate',
         diagnostics: dryRun.diagnostics,
-        unknownSymbols: dryRun.unknownSymbols,
       };
     }
 

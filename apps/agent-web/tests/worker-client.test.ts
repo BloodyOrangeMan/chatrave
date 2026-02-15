@@ -164,7 +164,7 @@ describe('worker-client apply validation', () => {
     if (result.status !== 'rejected') {
       throw new Error('Expected rejected result');
     }
-    expect(result.unknownSymbols).toEqual([]);
+    expect(result.unknownSymbols).toBeUndefined();
     expect(result.diagnostics?.[0]).toContain('__unknown__ is not defined');
   });
 

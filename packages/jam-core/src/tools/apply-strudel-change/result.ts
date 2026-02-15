@@ -6,11 +6,19 @@ export function toApplyScheduled(applyAt: string) {
   };
 }
 
-export function toApplyRejected(phase: string, diagnostics: string[], unknownSymbols: string[]) {
-  return {
+export function toApplyRejected(phase: string, diagnostics: string[], unknownSymbols?: string[]) {
+  const payload: {
+    status: 'rejected';
+    phase: string;
+    diagnostics: string[];
+    unknownSymbols?: string[];
+  } = {
     status: 'rejected' as const,
     phase,
     diagnostics,
-    unknownSymbols,
   };
+  if (Array.isArray(unknownSymbols) && unknownSymbols.length > 0) {
+    payload.unknownSymbols = unknownSymbols;
+  }
+  return payload;
 }
