@@ -31,7 +31,7 @@ export type RunnerEvent =
     }
   | {
       type: 'assistant.turn.completed';
-      payload: AssistantTurnState & { content: string };
+      payload: AssistantTurnState & { content: string; completedReason?: 'normal' | 'forced_final' | 'fallback_final' };
     }
   | {
       type: 'assistant.turn.canceled';

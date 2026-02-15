@@ -54,6 +54,56 @@ function isSufficientPostToolResponse(text: string): boolean {
   return true;
 }
 
+function summarizeToolResultsForFallback(results: unknown[]): string {
+  if (!Array.isArray(results) || results.length === 0) {
+    return 'No tool output was available.';
+  }
+
+  for (const result of results) {
+    if (!result || typeof result !== 'object') {
+      continue;
+    }
+    const maybe = result as {
+      name?: unknown;
+      status?: unknown;
+      output?: unknown;
+      error?: { message?: unknown };
+    };
+    if (maybe.name === 'apply_strudel_change') {
+      if (maybe.status === 'failed') {
+        const reason = typeof maybe.error?.message === 'string' ? maybe.error.message : 'apply failed';
+        return `Apply failed: ${reason}.`;
+      }
+      if (maybe.output && typeof maybe.output === 'object') {
+        const apply = maybe.output as {
+          status?: unknown;
+          diagnostics?: unknown;
+          applyAt?: unknown;
+        };
+        if (apply.status === 'rejected') {
+          const diagnostics = Array.isArray(apply.diagnostics)
+            ? apply.diagnostics.filter((item): item is string => typeof item === 'string')
+            : [];
+          if (diagnostics.length > 0) {
+            return `Apply rejected: ${diagnostics.join('; ')}.`;
+          }
+          return 'Apply rejected by validation.';
+        }
+        if (apply.status === 'scheduled') {
+          return typeof apply.applyAt === 'string'
+            ? `Apply scheduled at ${apply.applyAt}.`
+            : 'Apply scheduled on next quantized boundary.';
+        }
+        if (apply.status === 'applied') {
+          return 'Apply completed successfully.';
+        }
+      }
+    }
+  }
+
+  return 'Tools completed, but final model response was empty.';
+}
+
 function extractApplyToolOutput(result: ToolResult): { status?: string; applyAt?: string; diagnostics?: string[] } {
   if (!result.output || typeof result.output !== 'object') {
     return {};
@@ -152,6 +202,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
       let toolRounds = 0;
       let applyOutcome: 'scheduled' | 'applied' | 'rejected' | null = null;
       let forcedFinalAttempted = false;
+      let completionReason: 'normal' | 'forced_final' | 'fallback_final' = 'normal';
       let finalContent = '';
       let lastToolResults: unknown[] = [];
 
@@ -167,6 +218,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
         if (parsed.calls.length === 0) {
           if (toolRounds > 0 && !isSufficientPostToolResponse(cleaned) && !forcedFinalAttempted) {
             forcedFinalAttempted = true;
+            completionReason = 'forced_final';
             response = await callModel(abortController.signal, [
               { role: 'system', content: prompt.prompt },
               { role: 'user', content: contextualUserText },
@@ -272,7 +324,12 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
       }
 
       if (!finalContent.trim()) {
-        finalContent = 'No response content generated.';
+        completionReason = 'fallback_final';
+        finalContent = [
+          'I could not generate a complete final response this turn.',
+          summarizeToolResultsForFallback(lastToolResults),
+          'Please retry and I will continue from the latest state.',
+        ].join(' ');
       }
 
       if (finalContent) {
@@ -292,6 +349,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
           status: 'completed',
           timing: { startedAt: start, endedAt: end, durationMs: end - start },
           content: finalContent,
+          completedReason: completionReason,
         },
       });
     } catch (error) {

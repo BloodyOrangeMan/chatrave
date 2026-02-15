@@ -215,6 +215,55 @@ describe('agent runner', () => {
     expect(final).not.toContain('<|tool_calls_section_begin|>');
   });
 
+  it('emits deterministic fallback final text when post-tool responses remain empty', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockCompletionResponse(
+          'Inspecting now. <|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"s(\\"bd\\")","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"nope_sound\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
+        ),
+      )
+      .mockResolvedValueOnce(mockCompletionResponse(''))
+      .mockResolvedValueOnce(mockCompletionResponse(''));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const runner = createAgentRunner({
+      settings: {
+        schemaVersion: 1,
+        provider: 'openrouter',
+        model: 'moonshotai/kimi-k2.5',
+        reasoningEnabled: true,
+        reasoningMode: 'balanced',
+        temperature: 0.2,
+        apiKey: 'k',
+      },
+      applyStrudelChange: async () => ({
+        status: 'rejected',
+        phase: 'validate',
+        diagnostics: ['Unknown sound(s): nope_sound'],
+        unknownSymbols: ['nope_sound'],
+      }),
+      now: () => 100,
+    });
+
+    const deltas: string[] = [];
+    let completedReason: string | undefined;
+    runner.subscribeToEvents((event) => {
+      if (event.type === 'assistant.stream.delta') {
+        deltas.push(event.payload.delta);
+      }
+      if (event.type === 'assistant.turn.completed') {
+        completedReason = event.payload.completedReason;
+      }
+    });
+
+    await runner.sendUserMessage('make beat');
+    const final = deltas.join('');
+    expect(final).toContain('I could not generate a complete final response this turn.');
+    expect(final).toContain('Apply rejected: Unknown sound(s): nope_sound.');
+    expect(completedReason).toBe('fallback_final');
+  });
+
   it('forces a second follow-up when first post-tool response is planning-only', async () => {
     const fetchMock = vi
       .fn()
