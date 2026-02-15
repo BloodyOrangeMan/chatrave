@@ -25,7 +25,15 @@ export interface AgentRunnerConfig {
     input: ApplyStrudelChangeInput,
   ) => Promise<
     | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
-    | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] }
+    | {
+        status: 'rejected';
+        phase?: string;
+        diagnostics?: string[];
+        unknownSymbols?: string[];
+        latestCode?: string;
+        latestHash?: string;
+        expectedBaseHash?: string;
+      }
   >;
   knowledgeSources?: KnowledgeSources;
   getKnowledgeSources?: () => Promise<KnowledgeSources | undefined> | KnowledgeSources | undefined;

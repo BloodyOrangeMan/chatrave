@@ -18,6 +18,7 @@ export function toApplyRejected(
   diagnostics: string[],
   unknownSymbols?: string[],
   suggestedNext?: string,
+  staleMeta?: { latestCode: string; latestHash: string; expectedBaseHash: string },
 ) {
   const payload: {
     status: 'rejected';
@@ -26,6 +27,9 @@ export function toApplyRejected(
     diagnostics: string[];
     unknownSymbols?: string[];
     suggestedNext?: string;
+    latestCode?: string;
+    latestHash?: string;
+    expectedBaseHash?: string;
   } = {
     status: 'rejected' as const,
     phase,
@@ -37,6 +41,11 @@ export function toApplyRejected(
   }
   if (suggestedNext && suggestedNext.trim().length > 0) {
     payload.suggestedNext = suggestedNext.trim();
+  }
+  if (staleMeta) {
+    payload.latestCode = staleMeta.latestCode;
+    payload.latestHash = staleMeta.latestHash;
+    payload.expectedBaseHash = staleMeta.expectedBaseHash;
   }
   return payload;
 }

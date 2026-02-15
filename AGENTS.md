@@ -204,12 +204,14 @@ Use a hybrid context strategy for every LLM call:
   - last apply/validation summary
   - tool budget + repair budget remaining
 - Do **not** include full REPL code by default in every request.
-- Full code/context must be retrieved via `read_code(...)` when needed.
+- Include full active code in snapshot only when active hash changed since the model-known hash.
+- If hash is unchanged, keep snapshot compact (no full code).
 
 Apply safety requirements:
 - `apply_strudel_change` requests must carry `baseHash`.
-- If `baseHash` is stale, tool must reject with `STALE_BASE_HASH`.
-- On `STALE_BASE_HASH`, runtime refreshes and retries once.
+- `baseHash` is validated against live active code hash at apply execution time.
+- If `baseHash` is stale, tool must reject with `STALE_BASE_HASH` and include `latestCode/latestHash`.
+- On `STALE_BASE_HASH`, runtime retries once using returned `latestCode/latestHash` (no mandatory `read_code` round trip).
 - On unknown symbol rejection, runtime calls `strudel_knowledge(...)` and retries once.
 
 ---

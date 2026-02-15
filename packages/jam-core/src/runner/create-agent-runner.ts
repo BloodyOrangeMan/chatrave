@@ -13,15 +13,35 @@ function createIds(now: () => number): { turnId: string; messageId: string } {
   return { turnId: `turn-${id}`, messageId: `msg-${id}` };
 }
 
-function makeContextEnvelope(config: AgentRunnerConfig): RunnerContextEnvelope {
-  const fallbackSnapshot = {
+interface ReadCodeSnapshot {
+  code: string;
+  hash: string;
+}
+
+interface RuntimeContextOptions {
+  activeSnapshot: ReadCodeSnapshot | null;
+  includeActiveCode: boolean;
+}
+
+function makeContextEnvelope(config: AgentRunnerConfig, options: RuntimeContextOptions): RunnerContextEnvelope {
+  const fallbackSnapshot: RunnerContextEnvelope['snapshot'] = {
     activeCodeHash: 'unknown',
     started: false,
     recentUserIntent: '',
   };
+  const baseSnapshot = config.getReplSnapshot?.() ?? fallbackSnapshot;
+  const snapshot = { ...baseSnapshot };
+  if (options.activeSnapshot) {
+    snapshot.activeCodeHash = options.activeSnapshot.hash;
+    if (options.includeActiveCode) {
+      snapshot.activeCode = options.activeSnapshot.code;
+    } else if ('activeCode' in snapshot) {
+      delete snapshot.activeCode;
+    }
+  }
 
   return {
-    snapshot: config.getReplSnapshot?.() ?? fallbackSnapshot,
+    snapshot,
     toolBudgetRemaining: config.globalToolBudget ?? 20,
     repairAttemptsRemaining: config.maxRepairAttempts ?? 4,
   };
@@ -179,7 +199,6 @@ function toApplyInput(input: unknown): ApplyStrudelChangeInput | null {
   }
 
   const maybe = input as {
-    currentCode?: unknown;
     baseHash?: unknown;
     change?: unknown;
   };
@@ -201,18 +220,12 @@ function toApplyInput(input: unknown): ApplyStrudelChangeInput | null {
   }
 
   return {
-    currentCode: typeof maybe.currentCode === 'string' ? maybe.currentCode : '',
-    baseHash: typeof maybe.baseHash === 'string' ? maybe.baseHash : undefined,
+    baseHash: typeof maybe.baseHash === 'string' ? maybe.baseHash : '',
     change: {
       kind: parsedChange.kind,
       content: parsedChange.content,
     },
   };
-}
-
-interface ReadCodeSnapshot {
-  code: string;
-  hash: string;
 }
 
 function toReadCodeSnapshot(output: unknown): ReadCodeSnapshot | null {
@@ -234,33 +247,6 @@ async function readActiveSnapshot(config: AgentRunnerConfig): Promise<ReadCodeSn
   return toReadCodeSnapshot(output);
 }
 
-async function normalizeApplyCallInput(
-  call: ToolCall,
-  config: AgentRunnerConfig,
-): Promise<{ call: ToolCall } | { error: string }> {
-  const parsedInput = toApplyInput(call.input);
-  if (!parsedInput) {
-    return { error: 'Invalid apply_strudel_change payload' };
-  }
-
-  const input = parsedInput;
-  if (input.currentCode.trim().length > 0 && input.baseHash && input.baseHash.trim().length > 0) {
-    return { call: { ...call, input } };
-  }
-
-  const snapshot = await readActiveSnapshot(config);
-  if (!snapshot) {
-    return { error: 'Unable to hydrate apply input: active read_code snapshot unavailable.' };
-  }
-
-  const hydrated: ApplyStrudelChangeInput = {
-    ...input,
-    currentCode: input.currentCode.trim().length > 0 ? input.currentCode : snapshot.code,
-    baseHash: input.baseHash && input.baseHash.trim().length > 0 ? input.baseHash : snapshot.hash,
-  };
-  return { call: { ...call, input: hydrated } };
-}
-
 export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
   const listeners = new Set<(event: RunnerEvent) => void>();
   const now = config.now ?? Date.now;
@@ -274,6 +260,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
       extraHeaders: config.openRouterExtraHeaders,
     });
   let cachedKnowledgeSources = config.knowledgeSources;
+  let lastModelKnownHash: string | null = null;
 
   const emit = (event: RunnerEvent): void => {
     for (const listener of listeners) {
@@ -337,15 +324,27 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
 
       const skipRuntimeContextThisTurn = omitRuntimeContext;
       omitRuntimeContext = false;
+      const activeSnapshot = await readActiveSnapshot(config);
+      const includeActiveCodeInContext =
+        !skipRuntimeContextThisTurn &&
+        !!activeSnapshot &&
+        activeSnapshot.hash !== lastModelKnownHash;
+      if (includeActiveCodeInContext && activeSnapshot) {
+        lastModelKnownHash = activeSnapshot.hash;
+      }
       const contextualUserText = skipRuntimeContextThisTurn
         ? `User request:\n${text}`
-        : `[runtime_context]\n${JSON.stringify(makeContextEnvelope(config))}\n[/runtime_context]\n\nUser request:\n${text}`;
+        : `[runtime_context]\n${JSON.stringify(
+            makeContextEnvelope(config, {
+              activeSnapshot,
+              includeActiveCode: includeActiveCodeInContext,
+            }),
+          )}\n[/runtime_context]\n\nUser request:\n${text}`;
 
       const maxToolRoundsPerTurn = 4;
       let remainingToolBudget = config.globalToolBudget ?? 20;
       let toolRounds = 0;
       let applyOutcome: 'scheduled' | 'applied' | 'rejected' | null = null;
-      let staleBaseRetryUsed = false;
       let unknownRepairUsed = false;
       let forcedFinalAttempted = false;
       let completionReason: 'normal' | 'forced_final' | 'fallback_final' = 'normal';
@@ -409,9 +408,9 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
             }
           }
           if (call.name === 'apply_strudel_change') {
-            const normalized = await normalizeApplyCallInput(call, config);
-            if ('error' in normalized) {
-              const failedResult = buildFailedToolResult(call, now, normalized.error);
+            const parsedInput = toApplyInput(call.input);
+            if (!parsedInput) {
+              const failedResult = buildFailedToolResult(call, now, 'Invalid apply_strudel_change payload');
               emit({ type: 'tool.call.started', payload: { id: call.id, name: call.name } });
               emit({
                 type: 'tool.call.completed',
@@ -435,7 +434,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
               toolResults.push(failedResult);
               continue;
             }
-            dispatchCall = normalized.call;
+            dispatchCall = { ...call, input: parsedInput };
           }
 
           emit({ type: 'tool.call.started', payload: { id: dispatchCall.id, name: dispatchCall.name } });
@@ -458,85 +457,6 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
             },
           });
           toolResults.push(result);
-
-          if (
-            call.name === 'apply_strudel_change' &&
-            !staleBaseRetryUsed &&
-            extractApplyErrorCode(result) === 'STALE_BASE_HASH'
-          ) {
-            staleBaseRetryUsed = true;
-            if (remainingToolBudget > 0) {
-              remainingToolBudget -= 1;
-              const retrySnapshot = await readActiveSnapshot(config);
-              if (!retrySnapshot) {
-                const retryCall: ToolCall = { ...dispatchCall, id: `${dispatchCall.id}:stale-retry` };
-                result = buildFailedToolResult(
-                  retryCall,
-                  now,
-                  'STALE_BASE_HASH retry failed: unable to refresh active code snapshot.',
-                );
-                emit({ type: 'tool.call.started', payload: { id: retryCall.id, name: retryCall.name } });
-                emit({
-                  type: 'tool.call.completed',
-                  payload: {
-                    id: retryCall.id,
-                    name: retryCall.name,
-                    status: result.status,
-                    durationMs: result.durationMs,
-                    request: retryCall.input,
-                    response: result.output,
-                    errorMessage: result.error?.message,
-                  },
-                });
-              } else {
-                const parsedRetryInput = toApplyInput(dispatchCall.input);
-                if (!parsedRetryInput) {
-                  const retryCall: ToolCall = { ...dispatchCall, id: `${dispatchCall.id}:stale-retry` };
-                  result = buildFailedToolResult(retryCall, now, 'STALE_BASE_HASH retry failed: invalid apply payload.');
-                  emit({ type: 'tool.call.started', payload: { id: retryCall.id, name: retryCall.name } });
-                  emit({
-                    type: 'tool.call.completed',
-                    payload: {
-                      id: retryCall.id,
-                      name: retryCall.name,
-                      status: result.status,
-                      durationMs: result.durationMs,
-                      request: retryCall.input,
-                      response: result.output,
-                      errorMessage: result.error?.message,
-                    },
-                  });
-                } else {
-                const retryInput: ApplyStrudelChangeInput = {
-                  ...parsedRetryInput,
-                  currentCode: retrySnapshot.code,
-                  baseHash: retrySnapshot.hash,
-                };
-                const retryCall: ToolCall = { ...dispatchCall, id: `${dispatchCall.id}:stale-retry`, input: retryInput };
-                emit({ type: 'tool.call.started', payload: { id: retryCall.id, name: retryCall.name } });
-                result = (await dispatchToolCall(retryCall, {
-                  now,
-                  readCode: config.readCode,
-                  applyStrudelChange: config.applyStrudelChange,
-                  knowledgeSources: cachedKnowledgeSources,
-                })) as ToolResult;
-                emit({
-                  type: 'tool.call.completed',
-                  payload: {
-                    id: retryCall.id,
-                    name: retryCall.name,
-                    status: result.status,
-                    durationMs: result.durationMs,
-                    request: retryCall.input,
-                    response: result.output,
-                    errorMessage: result.error?.message,
-                  },
-                });
-                }
-              }
-              toolResults.push(result);
-            }
-          }
 
           if (call.name === 'apply_strudel_change') {
             if (result.status === 'failed') {
@@ -754,6 +674,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
         running = null;
       }
       completedContent.clear();
+      lastModelKnownHash = null;
       omitRuntimeContext = Boolean(options?.omitRuntimeContext);
       emit({ type: 'runner.state.changed', payload: { runningTurnId: null } });
     },

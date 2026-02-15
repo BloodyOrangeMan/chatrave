@@ -16,7 +16,15 @@ export interface ToolDispatcherContext {
     input: ApplyStrudelChangeInput,
   ) => Promise<
     | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
-    | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] }
+    | {
+        status: 'rejected';
+        phase?: string;
+        diagnostics?: string[];
+        unknownSymbols?: string[];
+        latestCode?: string;
+        latestHash?: string;
+        expectedBaseHash?: string;
+      }
   >;
   knowledgeSources?: KnowledgeSources;
 }
@@ -36,6 +44,7 @@ export async function dispatchToolCall(call: ToolCall, context: ToolDispatcherCo
 
     if (call.name === 'apply_strudel_change') {
       const output = await executeApplyStrudelChange(call.input as ApplyStrudelChangeInput, {
+        readCode: context.readCode,
         applyStrudelChange: context.applyStrudelChange,
       });
       const endedAt = now();

@@ -5,6 +5,7 @@ export interface ApplyStatusSummary {
 
 export interface ReplSnapshot {
   activeCodeHash: string;
+  activeCode?: string;
   shadowCodeHash?: string;
   started: boolean;
   cps?: number;

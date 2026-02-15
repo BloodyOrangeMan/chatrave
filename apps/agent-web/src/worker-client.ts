@@ -1,5 +1,6 @@
 import { createAgentRunner } from '@chatrave/jam-core';
 import type { AgentSettings, ReplSnapshot, RunnerEvent } from '@chatrave/shared-types';
+import type { ApplyStrudelChangeInput } from '@chatrave/jam-core';
 import { getReferenceSnapshot, getSoundsSnapshot } from '@chatrave/strudel-adapter';
 import { transpiler } from '@strudel/transpiler/transpiler.mjs';
 import { readRuntimeOverrides } from './runtime-overrides';
@@ -21,7 +22,15 @@ export interface RunnerWorkerClient {
 
 type HostApplyResult =
   | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
-  | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] };
+  | {
+      status: 'rejected';
+      phase?: string;
+      diagnostics?: string[];
+      unknownSymbols?: string[];
+      latestCode?: string;
+      latestHash?: string;
+      expectedBaseHash?: string;
+    };
 
 type StrudelWindow = Window & {
   strudelMirror?: {
@@ -188,18 +197,28 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
     }
   };
 
-  const applyStrudelChange = async (input: {
-    change: { kind: 'patch' | 'full_code'; content: string };
-  }): Promise<HostApplyResult> => {
+  const applyStrudelChange = async (input: ApplyStrudelChangeInput): Promise<HostApplyResult> => {
     const editor = hostContext?.editorRef?.current;
     if (!editor) {
       throw new Error('Editor context unavailable');
+    }
+    const activeCode = editor.code ?? '';
+    const activeHash = hashString(activeCode);
+    if (input.baseHash !== activeHash) {
+      return {
+        status: 'rejected',
+        phase: 'STALE_BASE_HASH',
+        diagnostics: [`STALE_BASE_HASH: expected ${input.baseHash} but active hash is ${activeHash}`],
+        latestCode: activeCode,
+        latestHash: activeHash,
+        expectedBaseHash: input.baseHash,
+      };
     }
 
     const nextCode =
       input.change.kind === 'full_code'
         ? input.change.content
-        : `${editor.code ?? ''}\n${input.change.content}`;
+        : `${activeCode}\n${input.change.content}`;
 
     const dryRun = dryRunValidateChange(nextCode);
     if (!dryRun.ok) {

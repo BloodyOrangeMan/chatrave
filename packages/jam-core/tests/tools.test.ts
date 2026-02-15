@@ -9,10 +9,11 @@ describe('tool dispatcher', () => {
       id: '1',
       name: 'apply_strudel_change',
       input: {
-        currentCode,
         baseHash: hashString(currentCode),
         change: { kind: 'patch', content: 's("hh")' },
       },
+    }, {
+      readCode: async () => ({ path: 'active', code: currentCode, hash: hashString(currentCode), lineCount: 1 }),
     });
 
     expect(result.status).toBe('succeeded');
@@ -20,20 +21,30 @@ describe('tool dispatcher', () => {
   });
 
   it('rejects apply on stale base hash', async () => {
+    const liveCode = 's("bd")';
     const result = await dispatchToolCall({
       id: '1b',
       name: 'apply_strudel_change',
       input: {
-        currentCode: 's("bd")',
         baseHash: 'fnv1a-deadbeef',
         change: { kind: 'patch', content: 's("hh")' },
       },
+    }, {
+      readCode: async () => ({ path: 'active', code: liveCode, hash: hashString(liveCode), lineCount: 1 }),
     });
 
-    const output = result.output as { status: string; phase?: string; errorCode?: string };
+    const output = result.output as {
+      status: string;
+      phase?: string;
+      errorCode?: string;
+      latestCode?: string;
+      latestHash?: string;
+    };
     expect(output.status).toBe('rejected');
     expect(output.phase).toBe('STALE_BASE_HASH');
     expect(output.errorCode).toBe('STALE_BASE_HASH');
+    expect(output.latestCode).toBe(liveCode);
+    expect(output.latestHash).toBe(hashString(liveCode));
   });
 
   it('preserves rejected host apply diagnostics', async () => {
@@ -43,12 +54,12 @@ describe('tool dispatcher', () => {
         id: '1c',
         name: 'apply_strudel_change',
         input: {
-          currentCode,
           baseHash: hashString(currentCode),
           change: { kind: 'full_code', content: 'stack(s("bd"), s("hh"))' },
         },
       },
       {
+        readCode: async () => ({ path: 'active', code: currentCode, hash: hashString(currentCode), lineCount: 1 }),
         applyStrudelChange: async () => ({
           status: 'rejected',
           phase: 'validate',
@@ -72,12 +83,12 @@ describe('tool dispatcher', () => {
         id: '1d',
         name: 'apply_strudel_change',
         input: {
-          currentCode,
           baseHash: hashString(currentCode),
           change: { kind: 'full_code', content: 'stack(s("bd"), s("not_loaded"))' },
         },
       },
       {
+        readCode: async () => ({ path: 'active', code: currentCode, hash: hashString(currentCode), lineCount: 1 }),
         applyStrudelChange: async () => ({
           status: 'rejected',
           phase: 'validate',

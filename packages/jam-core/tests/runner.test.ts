@@ -102,7 +102,7 @@ describe('agent runner', () => {
 
     expect(completedTools).toContain('read_code');
     expect(completedTools).toContain('apply_strudel_change');
-    expect(readMock).toHaveBeenCalledTimes(2);
+    expect(readMock).toHaveBeenCalledTimes(3);
     expect(applyMock).toHaveBeenCalledTimes(1);
     expect(applyStatuses).toContain('scheduled');
     expect(deltas.join('')).toContain('cp*2');
@@ -227,7 +227,7 @@ describe('agent runner', () => {
       .fn()
       .mockResolvedValueOnce(
         mockCompletionResponse(
-          'Inspecting now. <|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"s(\\"bd\\")","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"nope_sound\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
+          'Inspecting now. <|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"baseHash":"fnv1a-2f10d95b","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"nope_sound\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
         ),
       )
       .mockResolvedValueOnce(mockCompletionResponse(''))
@@ -423,7 +423,7 @@ describe('agent runner', () => {
       .fn()
       .mockResolvedValueOnce(
         mockCompletionResponse(
-          '<function_calls><invoke name="apply_strudel_change"><parameter name="currentCode">s("bd")</parameter></invoke></function_calls>',
+          '<function_calls><invoke name="apply_strudel_change"><parameter name="baseHash">fnv1a-2f10d95b</parameter><parameter name="change">{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"hh*8\\"))"}</parameter></invoke></function_calls>',
         ),
       )
       .mockResolvedValueOnce(mockCompletionResponse('Attempted apply and got validation feedback.'));
@@ -454,29 +454,22 @@ describe('agent runner', () => {
     });
 
     await runner.sendUserMessage('give me a techno beat');
-    expect(applyStatuses.some((entry) => entry.status === 'rejected')).toBe(true);
+    expect(applyStatuses.some((entry) => entry.status === 'scheduled')).toBe(true);
     expect(deltas.join('')).toContain('Attempted apply and got validation feedback.');
   });
 
-  it('hydrates apply input with active code/hash when model omits baseHash', async () => {
+  it('rejects apply payload when baseHash is omitted', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
         mockCompletionResponse(
-          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"hh*8\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
+          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"hh*8\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
         ),
       )
-      .mockResolvedValueOnce(mockCompletionResponse('Applied with hydrated base.'));
+      .mockResolvedValueOnce(mockCompletionResponse('Apply rejected because baseHash is required.'));
     vi.stubGlobal('fetch', fetchMock);
 
     const applyMock = vi.fn().mockResolvedValue({ status: 'scheduled', applyAt: '2026-02-15T00:00:00.000Z' });
-    const activeCode = 'stack(s("bd"))';
-    const readMock = vi.fn().mockResolvedValue({
-      path: 'active',
-      code: activeCode,
-      hash: hashString(activeCode),
-      lineCount: 1,
-    });
 
     const runner = createAgentRunner({
       settings: {
@@ -488,32 +481,46 @@ describe('agent runner', () => {
         temperature: 0.2,
         apiKey: 'k',
       },
-      readCode: readMock,
       applyStrudelChange: applyMock,
       now: () => 100,
     });
 
-    await runner.sendUserMessage('make beat');
-    expect(readMock).toHaveBeenCalledWith({ path: 'active' });
-    expect(applyMock).toHaveBeenCalledTimes(1);
-    expect(applyMock.mock.calls[0][0]).toMatchObject({
-      currentCode: 'stack(s("bd"))',
-      baseHash: hashString(activeCode),
-      change: { kind: 'full_code' },
+    const applyStatuses: string[] = [];
+    const completed: Array<{ name: string; status: string; error?: string; response?: unknown }> = [];
+    runner.subscribeToEvents((event) => {
+      if (event.type === 'apply.status.changed') {
+        applyStatuses.push(event.payload.status);
+      }
+      if (event.type === 'tool.call.completed') {
+        completed.push({
+          name: event.payload.name,
+          status: event.payload.status,
+          error: event.payload.errorMessage,
+          response: event.payload.response,
+        });
+      }
     });
+
+    await runner.sendUserMessage('make beat');
+    expect(applyMock).not.toHaveBeenCalled();
+    expect(applyStatuses).toContain('rejected');
+    expect(completed.some((item) => item.name === 'apply_strudel_change' && item.status === 'succeeded')).toBe(true);
+    const applyResponse = completed.find((item) => item.name === 'apply_strudel_change')?.response as { errorCode?: string };
+    expect(applyResponse.errorCode).toBe('VALIDATION_ERROR');
   });
 
-  it('retries apply once on STALE_BASE_HASH and emits final scheduled status', async () => {
-    const startingCode = 'stack(s("bd"))';
-    const startingHash = hashString(startingCode);
+  it('does not auto-retry STALE_BASE_HASH and forwards stale metadata in tool result', async () => {
+    const staleHash = hashString('stack(s("bd"))');
+    const latestCode = 'stack(s("bd"), s("cp"))';
+    const latestHash = hashString(latestCode);
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
         mockCompletionResponse(
-          `<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"${startingCode.replace(/"/g, '\\"')}","baseHash":"${startingHash}","change":{"kind":"patch","content":"s(\\"hh\\")"}} <|tool_call_end|> <|tool_calls_section_end|>`,
+          `<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"baseHash":"${staleHash}","change":{"kind":"patch","content":"s(\\"hh\\")"}} <|tool_call_end|> <|tool_calls_section_end|>`,
         ),
       )
-      .mockResolvedValueOnce(mockCompletionResponse('Retried with latest base and scheduled apply.'));
+      .mockResolvedValueOnce(mockCompletionResponse('Stale base detected; retry with latest hash.'));
     vi.stubGlobal('fetch', fetchMock);
 
     const applyMock = vi
@@ -521,14 +528,15 @@ describe('agent runner', () => {
       .mockResolvedValueOnce({
         status: 'rejected',
         phase: 'STALE_BASE_HASH',
-        diagnostics: ['STALE_BASE_HASH: expected old-hash but active hash is new-hash'],
-      })
-      .mockResolvedValueOnce({ status: 'scheduled', applyAt: '2026-02-15T00:00:01.000Z' });
-    const liveCode = 'stack(s("bd"), s("cp"))';
+        diagnostics: [`STALE_BASE_HASH: expected ${staleHash} but active hash is ${latestHash}`],
+        latestCode,
+        latestHash,
+        expectedBaseHash: staleHash,
+      });
     const readMock = vi.fn().mockResolvedValue({
       path: 'active',
-      code: liveCode,
-      hash: hashString(liveCode),
+      code: latestCode,
+      hash: latestHash,
       lineCount: 1,
     });
 
@@ -547,84 +555,21 @@ describe('agent runner', () => {
       now: () => 100,
     });
 
-    const completedApplyIds: string[] = [];
-    const applyStatuses: string[] = [];
+    const completedApplyPayloads: unknown[] = [];
     runner.subscribeToEvents((event) => {
       if (event.type === 'tool.call.completed' && event.payload.name === 'apply_strudel_change') {
-        completedApplyIds.push(event.payload.id);
-      }
-      if (event.type === 'apply.status.changed') {
-        applyStatuses.push(event.payload.status);
+        completedApplyPayloads.push(event.payload.response);
       }
     });
 
     await runner.sendUserMessage('make beat');
-    expect(applyMock).toHaveBeenCalledTimes(2);
-    expect(readMock).toHaveBeenCalledTimes(1);
-    expect(completedApplyIds.some((id) => id.endsWith(':stale-retry'))).toBe(true);
-    expect(applyStatuses).toContain('scheduled');
-    expect(applyStatuses).not.toContain('rejected');
-  });
-
-  it('retries apply once on STALE_BASE_HASH then keeps final rejection if retry still stale', async () => {
-    const startingCode = 'stack(s("bd"))';
-    const startingHash = hashString(startingCode);
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        mockCompletionResponse(
-          `<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"${startingCode.replace(/"/g, '\\"')}","baseHash":"${startingHash}","change":{"kind":"patch","content":"s(\\"hh\\")"}} <|tool_call_end|> <|tool_calls_section_end|>`,
-        ),
-      )
-      .mockResolvedValueOnce(mockCompletionResponse('Still stale after retry.'));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const applyMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        status: 'rejected',
-        phase: 'STALE_BASE_HASH',
-        diagnostics: ['STALE_BASE_HASH: first'],
-      })
-      .mockResolvedValueOnce({
-        status: 'rejected',
-        phase: 'STALE_BASE_HASH',
-        diagnostics: ['STALE_BASE_HASH: second'],
-      });
-    const liveCode = 'stack(s("bd"), s("cp"))';
-    const readMock = vi.fn().mockResolvedValue({
-      path: 'active',
-      code: liveCode,
-      hash: hashString(liveCode),
-      lineCount: 1,
-    });
-
-    const runner = createAgentRunner({
-      settings: {
-        schemaVersion: 1,
-        provider: 'openrouter',
-        model: 'moonshotai/kimi-k2.5',
-        reasoningEnabled: true,
-        reasoningMode: 'balanced',
-        temperature: 0.2,
-        apiKey: 'k',
-      },
-      readCode: readMock,
-      applyStrudelChange: applyMock,
-      now: () => 100,
-    });
-
-    const applyStatuses: string[] = [];
-    runner.subscribeToEvents((event) => {
-      if (event.type === 'apply.status.changed') {
-        applyStatuses.push(event.payload.status);
-      }
-    });
-
-    await runner.sendUserMessage('make beat');
-    expect(applyMock).toHaveBeenCalledTimes(2);
-    expect(readMock).toHaveBeenCalledTimes(1);
-    expect(applyStatuses).toEqual(['rejected']);
+    expect(applyMock).toHaveBeenCalledTimes(0);
+    expect(readMock).toHaveBeenCalled();
+    expect(completedApplyPayloads).toHaveLength(1);
+    const payload = completedApplyPayloads[0] as { latestCode?: string; latestHash?: string; expectedBaseHash?: string };
+    expect(payload.latestCode).toBe(latestCode);
+    expect(payload.latestHash).toBe(latestHash);
+    expect(payload.expectedBaseHash).toBe(staleHash);
   });
 
   it('runs one unknown-symbol repair loop via strudel_knowledge and reapplies', async () => {
@@ -632,12 +577,12 @@ describe('agent runner', () => {
       .fn()
       .mockResolvedValueOnce(
         mockCompletionResponse(
-          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"stack(s(\\"bd\\"))","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"not_loaded\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
+          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"baseHash":"fnv1a-52660a86","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"not_loaded\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
         ),
       )
       .mockResolvedValueOnce(
         mockCompletionResponse(
-          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"stack(s(\\"bd\\"))","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"hh*8\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
+          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"baseHash":"fnv1a-52660a86","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"hh*8\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
         ),
       )
       .mockResolvedValueOnce(mockCompletionResponse('Applied repaired groove.'));
@@ -697,12 +642,12 @@ describe('agent runner', () => {
       .fn()
       .mockResolvedValueOnce(
         mockCompletionResponse(
-          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"stack(s(\\"bd\\"))","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"not_loaded\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
+          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"baseHash":"fnv1a-52660a86","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"not_loaded\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
         ),
       )
       .mockResolvedValueOnce(
         mockCompletionResponse(
-          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"stack(s(\\"bd\\"))","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"still_missing\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
+          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"baseHash":"fnv1a-52660a86","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"still_missing\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
         ),
       )
       .mockResolvedValueOnce(mockCompletionResponse('Repair failed after one attempt.'));
@@ -755,6 +700,71 @@ describe('agent runner', () => {
     await runner.sendUserMessage('make beat');
     expect(applyMock).toHaveBeenCalledTimes(2);
     expect(completedTools.filter((name) => name === 'strudel_knowledge')).toHaveLength(1);
+  });
+
+  it('includes full active code in runtime context only when hash changed', async () => {
+    const completeMock = vi.fn().mockResolvedValue('ok');
+    const activeCode = 'stack(s("bd"))';
+    const runner = createAgentRunner({
+      settings: {
+        schemaVersion: 1,
+        provider: 'openrouter',
+        model: 'moonshotai/kimi-k2.5',
+        reasoningEnabled: true,
+        reasoningMode: 'balanced',
+        temperature: 0.2,
+        apiKey: 'k',
+      },
+      completionClient: { complete: completeMock },
+      getReplSnapshot: () => ({ activeCodeHash: 'unknown', started: false }),
+      readCode: async () => ({ path: 'active', code: activeCode, hash: hashString(activeCode), lineCount: 1 }),
+      now: () => 100,
+    });
+
+    await runner.sendUserMessage('first');
+    await runner.sendUserMessage('second');
+
+    const firstMessages = completeMock.mock.calls[0][0].messages as Array<{ role: string; content: string }>;
+    const secondMessages = completeMock.mock.calls[1][0].messages as Array<{ role: string; content: string }>;
+    const firstMatch = firstMessages[1].content.match(/\[runtime_context\]\n([\s\S]*?)\n\[\/runtime_context\]/);
+    const secondMatch = secondMessages[1].content.match(/\[runtime_context\]\n([\s\S]*?)\n\[\/runtime_context\]/);
+    expect(firstMatch).toBeTruthy();
+    expect(secondMatch).toBeTruthy();
+    const firstContext = JSON.parse(firstMatch?.[1] ?? '{}') as { snapshot: { activeCode?: string } };
+    const secondContext = JSON.parse(secondMatch?.[1] ?? '{}') as { snapshot: { activeCode?: string } };
+    expect(firstContext.snapshot.activeCode).toBe(activeCode);
+    expect(secondContext.snapshot.activeCode).toBeUndefined();
+  });
+
+  it('re-includes full active code in runtime context after hash changes', async () => {
+    const completeMock = vi.fn().mockResolvedValue('ok');
+    let activeCode = 'stack(s("bd"))';
+    const runner = createAgentRunner({
+      settings: {
+        schemaVersion: 1,
+        provider: 'openrouter',
+        model: 'moonshotai/kimi-k2.5',
+        reasoningEnabled: true,
+        reasoningMode: 'balanced',
+        temperature: 0.2,
+        apiKey: 'k',
+      },
+      completionClient: { complete: completeMock },
+      getReplSnapshot: () => ({ activeCodeHash: 'unknown', started: false }),
+      readCode: async () => ({ path: 'active', code: activeCode, hash: hashString(activeCode), lineCount: 1 }),
+      now: () => 100,
+    });
+
+    await runner.sendUserMessage('first');
+    activeCode = 'stack(s("bd"), s("cp"))';
+    await runner.sendUserMessage('second');
+
+    const secondMessages = completeMock.mock.calls[1][0].messages as Array<{ role: string; content: string }>;
+    const secondMatch = secondMessages[1].content.match(/\[runtime_context\]\n([\s\S]*?)\n\[\/runtime_context\]/);
+    expect(secondMatch).toBeTruthy();
+    const secondContext = JSON.parse(secondMatch?.[1] ?? '{}') as { snapshot: { activeCode?: string; activeCodeHash?: string } };
+    expect(secondContext.snapshot.activeCode).toBe(activeCode);
+    expect(secondContext.snapshot.activeCodeHash).toBe(hashString(activeCode));
   });
 
   it('clears stored conversation context on resetContext', async () => {

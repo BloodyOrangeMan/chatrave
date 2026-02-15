@@ -23,8 +23,7 @@ export interface ReadCodeInput {
 }
 
 export interface ApplyStrudelChangeInput {
-  currentCode: string;
-  baseHash?: string;
+  baseHash: string;
   change: {
     kind: 'patch' | 'full_code';
     content: string;

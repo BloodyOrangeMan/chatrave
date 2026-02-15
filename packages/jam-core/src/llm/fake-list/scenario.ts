@@ -29,7 +29,7 @@ export const BUILTIN_FAKE_SCENARIOS: Record<string, FakeScenario> = {
           {
             name: 'apply_strudel_change',
             args: {
-              currentCode: '',
+              baseHash: 'fnv1a-2f10d95b',
               change: {
                 kind: 'full_code',
                 content: 'setcpm(120/4)\nstack(s("bd*4"), s("hh*8"))',
@@ -59,7 +59,7 @@ export const BUILTIN_FAKE_SCENARIOS: Record<string, FakeScenario> = {
           {
             name: 'apply_strudel_change',
             args: {
-              currentCode: '',
+              baseHash: 'fnv1a-2f10d95b',
               change: {
                 kind: 'full_code',
                 content: 'setcpm(120/4)\nstack(s("bd*4"), s("hh*8"), s("cp*2"))',
@@ -102,7 +102,7 @@ export const BUILTIN_FAKE_SCENARIOS: Record<string, FakeScenario> = {
           {
             name: 'apply_strudel_change',
             args: {
-              currentCode: '',
+              baseHash: 'fnv1a-2f10d95b',
               change: {
                 kind: 'full_code',
                 content: 'setcpm(120/4)\nstack(s("bd*4"), s("definitely_not_a_sound"))',
