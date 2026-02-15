@@ -627,6 +627,136 @@ describe('agent runner', () => {
     expect(applyStatuses).toEqual(['rejected']);
   });
 
+  it('runs one unknown-symbol repair loop via strudel_knowledge and reapplies', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockCompletionResponse(
+          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"stack(s(\\"bd\\"))","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"not_loaded\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
+        ),
+      )
+      .mockResolvedValueOnce(
+        mockCompletionResponse(
+          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"stack(s(\\"bd\\"))","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"hh*8\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
+        ),
+      )
+      .mockResolvedValueOnce(mockCompletionResponse('Applied repaired groove.'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const applyMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'rejected',
+        phase: 'validate',
+        diagnostics: ['Unknown sound(s): not_loaded'],
+        unknownSymbols: ['not_loaded'],
+      })
+      .mockResolvedValueOnce({ status: 'scheduled', applyAt: '2026-02-15T00:00:03.000Z' });
+
+    const runner = createAgentRunner({
+      settings: {
+        schemaVersion: 1,
+        provider: 'openrouter',
+        model: 'moonshotai/kimi-k2.5',
+        reasoningEnabled: true,
+        reasoningMode: 'balanced',
+        temperature: 0.2,
+        apiKey: 'k',
+      },
+      readCode: async () => {
+        const activeCode = 'stack(s("bd"))';
+        return { path: 'active', code: activeCode, hash: hashString(activeCode), lineCount: 1 };
+      },
+      applyStrudelChange: applyMock,
+      knowledgeSources: {
+        reference: [{ name: 's', description: 'sound selector', examples: ['s("bd")'] }],
+        sounds: [{ key: 'hh', data: { type: 'sample', tag: 'drum-machines', prebake: true } }],
+      },
+      now: () => 100,
+    });
+
+    const completedTools: string[] = [];
+    const applyStatuses: string[] = [];
+    runner.subscribeToEvents((event) => {
+      if (event.type === 'tool.call.completed') {
+        completedTools.push(event.payload.name);
+      }
+      if (event.type === 'apply.status.changed') {
+        applyStatuses.push(event.payload.status);
+      }
+    });
+
+    await runner.sendUserMessage('make beat');
+    expect(applyMock).toHaveBeenCalledTimes(2);
+    expect(completedTools.filter((name) => name === 'strudel_knowledge')).toHaveLength(1);
+    expect(applyStatuses).toContain('scheduled');
+  });
+
+  it('limits unknown-symbol auto-repair to one knowledge lookup per turn', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockCompletionResponse(
+          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"stack(s(\\"bd\\"))","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"not_loaded\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
+        ),
+      )
+      .mockResolvedValueOnce(
+        mockCompletionResponse(
+          '<|tool_calls_section_begin|> <|tool_call_begin|> functions.apply_strudel_change:0 <|tool_call_argument_begin|> {"currentCode":"stack(s(\\"bd\\"))","change":{"kind":"full_code","content":"stack(s(\\"bd*4\\"), s(\\"still_missing\\"))"}} <|tool_call_end|> <|tool_calls_section_end|>',
+        ),
+      )
+      .mockResolvedValueOnce(mockCompletionResponse('Repair failed after one attempt.'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const applyMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'rejected',
+        phase: 'validate',
+        diagnostics: ['Unknown sound(s): not_loaded'],
+        unknownSymbols: ['not_loaded'],
+      })
+      .mockResolvedValueOnce({
+        status: 'rejected',
+        phase: 'validate',
+        diagnostics: ['Unknown sound(s): still_missing'],
+        unknownSymbols: ['still_missing'],
+      });
+
+    const runner = createAgentRunner({
+      settings: {
+        schemaVersion: 1,
+        provider: 'openrouter',
+        model: 'moonshotai/kimi-k2.5',
+        reasoningEnabled: true,
+        reasoningMode: 'balanced',
+        temperature: 0.2,
+        apiKey: 'k',
+      },
+      readCode: async () => {
+        const activeCode = 'stack(s("bd"))';
+        return { path: 'active', code: activeCode, hash: hashString(activeCode), lineCount: 1 };
+      },
+      applyStrudelChange: applyMock,
+      knowledgeSources: {
+        reference: [{ name: 's', description: 'sound selector', examples: ['s("bd")'] }],
+        sounds: [{ key: 'hh', data: { type: 'sample', tag: 'drum-machines', prebake: true } }],
+      },
+      now: () => 100,
+    });
+
+    const completedTools: string[] = [];
+    runner.subscribeToEvents((event) => {
+      if (event.type === 'tool.call.completed') {
+        completedTools.push(event.payload.name);
+      }
+    });
+
+    await runner.sendUserMessage('make beat');
+    expect(applyMock).toHaveBeenCalledTimes(2);
+    expect(completedTools.filter((name) => name === 'strudel_knowledge')).toHaveLength(1);
+  });
+
   it('clears stored conversation context on resetContext', async () => {
     const fetchMock = vi.fn().mockResolvedValue(mockCompletionResponse('ok'));
     vi.stubGlobal('fetch', fetchMock);

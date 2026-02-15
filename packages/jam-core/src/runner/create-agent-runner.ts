@@ -126,6 +126,35 @@ function extractApplyErrorCode(result: ToolResult): string | undefined {
   return typeof maybe.errorCode === 'string' ? maybe.errorCode : undefined;
 }
 
+function extractUnknownSymbols(result: ToolResult): string[] {
+  if (!result.output || typeof result.output !== 'object') {
+    return [];
+  }
+  const maybe = result.output as { unknownSymbols?: unknown };
+  if (!Array.isArray(maybe.unknownSymbols)) {
+    return [];
+  }
+  return maybe.unknownSymbols.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+function findUnknownSoundApplyResult(results: ToolResult[]): { result: ToolResult; symbols: string[] } | null {
+  for (let i = results.length - 1; i >= 0; i -= 1) {
+    const result = results[i];
+    if (result.name !== 'apply_strudel_change' || result.status !== 'succeeded') {
+      continue;
+    }
+    if (extractApplyErrorCode(result) !== 'UNKNOWN_SOUND') {
+      continue;
+    }
+    const symbols = extractUnknownSymbols(result);
+    if (symbols.length === 0) {
+      continue;
+    }
+    return { result, symbols };
+  }
+  return null;
+}
+
 function buildFailedToolResult(
   call: ToolCall,
   now: () => number,
@@ -244,6 +273,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
       baseUrl: config.openRouterBaseUrl,
       extraHeaders: config.openRouterExtraHeaders,
     });
+  let cachedKnowledgeSources = config.knowledgeSources;
 
   const emit = (event: RunnerEvent): void => {
     for (const listener of listeners) {
@@ -316,6 +346,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
       let toolRounds = 0;
       let applyOutcome: 'scheduled' | 'applied' | 'rejected' | null = null;
       let staleBaseRetryUsed = false;
+      let unknownRepairUsed = false;
       let forcedFinalAttempted = false;
       let completionReason: 'normal' | 'forced_final' | 'fallback_final' = 'normal';
       let finalContent = '';
@@ -370,6 +401,13 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
           remainingToolBudget -= 1;
 
           let dispatchCall: ToolCall = call;
+          if (call.name === 'strudel_knowledge' && !cachedKnowledgeSources && config.getKnowledgeSources) {
+            try {
+              cachedKnowledgeSources = await config.getKnowledgeSources();
+            } catch {
+              cachedKnowledgeSources = undefined;
+            }
+          }
           if (call.name === 'apply_strudel_change') {
             const normalized = await normalizeApplyCallInput(call, config);
             if ('error' in normalized) {
@@ -405,8 +443,8 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
             now,
             readCode: config.readCode,
             applyStrudelChange: config.applyStrudelChange,
-            knowledgeSources: config.knowledgeSources,
-          });
+            knowledgeSources: cachedKnowledgeSources,
+          }) as ToolResult;
           emit({
             type: 'tool.call.completed',
             payload: {
@@ -476,12 +514,12 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
                 };
                 const retryCall: ToolCall = { ...dispatchCall, id: `${dispatchCall.id}:stale-retry`, input: retryInput };
                 emit({ type: 'tool.call.started', payload: { id: retryCall.id, name: retryCall.name } });
-                result = await dispatchToolCall(retryCall, {
+                result = (await dispatchToolCall(retryCall, {
                   now,
                   readCode: config.readCode,
                   applyStrudelChange: config.applyStrudelChange,
-                  knowledgeSources: config.knowledgeSources,
-                });
+                  knowledgeSources: cachedKnowledgeSources,
+                })) as ToolResult;
                 emit({
                   type: 'tool.call.completed',
                   payload: {
@@ -500,27 +538,33 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
             }
           }
 
-          if (call.name === 'apply_strudel_change' && !applyOutcome) {
+          if (call.name === 'apply_strudel_change') {
             if (result.status === 'failed') {
-              emit({
-                type: 'apply.status.changed',
-                payload: { status: 'rejected', reason: result.error?.message || 'apply failed' },
-              });
-              applyOutcome = 'rejected';
+              if (!applyOutcome) {
+                emit({
+                  type: 'apply.status.changed',
+                  payload: { status: 'rejected', reason: result.error?.message || 'apply failed' },
+                });
+                applyOutcome = 'rejected';
+              }
             } else {
               const output = extractApplyToolOutput(result);
               if (output.status === 'scheduled' || output.status === 'applied') {
-                emit({
-                  type: 'apply.status.changed',
-                  payload: { status: output.status, applyAt: output.applyAt },
-                });
-                applyOutcome = output.status;
+                if (!applyOutcome || applyOutcome === 'rejected') {
+                  emit({
+                    type: 'apply.status.changed',
+                    payload: { status: output.status, applyAt: output.applyAt },
+                  });
+                  applyOutcome = output.status;
+                }
               } else {
-                emit({
-                  type: 'apply.status.changed',
-                  payload: { status: 'rejected', reason: output.diagnostics?.join('; ') || 'apply failed' },
-                });
-                applyOutcome = 'rejected';
+                if (!applyOutcome) {
+                  emit({
+                    type: 'apply.status.changed',
+                    payload: { status: 'rejected', reason: output.diagnostics?.join('; ') || 'apply failed' },
+                  });
+                  applyOutcome = 'rejected';
+                }
               }
             }
           }
@@ -531,6 +575,74 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
           break;
         }
         lastToolResults = toolResults;
+
+        const unknownApply = !unknownRepairUsed ? findUnknownSoundApplyResult(toolResults as ToolResult[]) : null;
+        if (unknownApply) {
+          unknownRepairUsed = true;
+          if (remainingToolBudget <= 0) {
+            finalContent = 'Stopped before repair because tool budget is exhausted.';
+            break;
+          }
+          if (!cachedKnowledgeSources && config.getKnowledgeSources) {
+            try {
+              cachedKnowledgeSources = await config.getKnowledgeSources();
+            } catch {
+              cachedKnowledgeSources = undefined;
+            }
+          }
+          const knowledgeCall: ToolCall = {
+            id: `tool-${now()}-unknown-repair`,
+            name: 'strudel_knowledge',
+            input: { query: unknownApply.symbols.join(' ') },
+          };
+          remainingToolBudget -= 1;
+          emit({ type: 'tool.call.started', payload: { id: knowledgeCall.id, name: knowledgeCall.name } });
+          const knowledgeResult = await dispatchToolCall(knowledgeCall, {
+            now,
+            readCode: config.readCode,
+            applyStrudelChange: config.applyStrudelChange,
+            knowledgeSources: cachedKnowledgeSources,
+          });
+          emit({
+            type: 'tool.call.completed',
+            payload: {
+              id: knowledgeResult.id,
+              name: knowledgeResult.name,
+              status: knowledgeResult.status,
+              durationMs: knowledgeResult.durationMs,
+              request: knowledgeCall.input,
+              response: knowledgeResult.output,
+              errorMessage: knowledgeResult.error?.message,
+            },
+          });
+          toolResults.push(knowledgeResult);
+          lastToolResults = toolResults;
+
+          response = await callModel(abortController.signal, [
+            { role: 'system', content: prompt.prompt },
+            { role: 'user', content: contextualUserText },
+            {
+              role: 'assistant',
+              content: cleaned || 'I used tools to inspect and prepare a response.',
+            },
+            {
+              role: 'user',
+              content:
+                `Tool results:\n${formatToolResults(toolResults)}\n\n` +
+                `Repair request: The apply failed due to unknown symbols (${unknownApply.symbols.join(', ')}). ` +
+                'Return a repaired apply_strudel_change tool call only.',
+            },
+          ]);
+          continue;
+        }
+
+        if (!cachedKnowledgeSources && config.getKnowledgeSources) {
+          try {
+            cachedKnowledgeSources = await config.getKnowledgeSources();
+          } catch {
+            cachedKnowledgeSources = undefined;
+          }
+        }
 
         response = await callModel(abortController.signal, [
           { role: 'system', content: prompt.prompt },

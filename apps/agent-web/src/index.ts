@@ -4,6 +4,7 @@ import { registerAgentTabRenderer } from '@chatrave/strudel-adapter';
 import { createRunnerWorkerClient, type AgentHostContext } from './worker-client';
 import {
   buildScenariosUrl,
+  isDevFakeUiEnabled,
   isLocalDevBaseUrl,
   readRuntimeOverrides,
   readRuntimeScenario,
@@ -279,7 +280,7 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
     const latestOverrides = readRuntimeOverrides();
     const baseUrl = latestOverrides.openRouterBaseUrl;
     const currentScenario = readRuntimeScenario();
-    if (!isLocalDevBaseUrl(baseUrl)) {
+    if (!isDevFakeUiEnabled() || !isLocalDevBaseUrl(baseUrl)) {
       devScenarioLabel.style.display = 'none';
       return;
     }

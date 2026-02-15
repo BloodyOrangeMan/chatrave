@@ -7,6 +7,7 @@ import {
 } from './contracts';
 import { executeApplyStrudelChange } from './apply-strudel-change/execute';
 import { executeStrudelKnowledge, type KnowledgeSources } from './strudel-knowledge/execute';
+import { toKnowledgeUnavailable } from './strudel-knowledge/result';
 
 export interface ToolDispatcherContext {
   now?: () => number;
@@ -43,7 +44,18 @@ export async function dispatchToolCall(call: ToolCall, context: ToolDispatcherCo
 
     if (call.name === 'strudel_knowledge') {
       if (!context.knowledgeSources) {
-        throw new Error('No knowledge sources configured');
+        const input = call.input as StrudelKnowledgeInput;
+        const query = typeof input?.query === 'string' ? input.query : input?.query?.q ?? '';
+        const endedAt = now();
+        return {
+          id: call.id,
+          name: call.name,
+          status: 'succeeded',
+          output: toKnowledgeUnavailable(query),
+          startedAt,
+          endedAt,
+          durationMs: endedAt - startedAt,
+        };
       }
       const output = executeStrudelKnowledge(call.input as StrudelKnowledgeInput, context.knowledgeSources);
       const endedAt = now();

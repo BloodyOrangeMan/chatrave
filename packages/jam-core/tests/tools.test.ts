@@ -147,4 +147,17 @@ describe('tool dispatcher', () => {
     expect(output.ok).toBe(false);
     expect(output.reason).toBe('not_found');
   });
+
+  it('returns structured unavailable result when knowledge sources are missing', async () => {
+    const result = await dispatchToolCall({
+      id: '4',
+      name: 'strudel_knowledge',
+      input: { query: 'room' },
+    });
+
+    const output = result.output as { ok: boolean; reason?: string };
+    expect(result.status).toBe('succeeded');
+    expect(output.ok).toBe(false);
+    expect(output.reason).toBe('knowledge_sources_unavailable');
+  });
 });

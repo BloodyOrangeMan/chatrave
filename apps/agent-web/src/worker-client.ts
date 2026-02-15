@@ -1,5 +1,6 @@
 import { createAgentRunner } from '@chatrave/jam-core';
 import type { AgentSettings, ReplSnapshot, RunnerEvent } from '@chatrave/shared-types';
+import { getReferenceSnapshot, getSoundsSnapshot } from '@chatrave/strudel-adapter';
 import { transpiler } from '@strudel/transpiler/transpiler.mjs';
 import { readRuntimeOverrides } from './runtime-overrides';
 
@@ -137,6 +138,18 @@ function buildSnapshot(hostContext?: AgentHostContext): ReplSnapshot {
 
 export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: AgentHostContext): RunnerWorkerClient {
   const runtimeOverrides = readRuntimeOverrides();
+  let knowledgeSourcesCache: {
+    reference: Awaited<ReturnType<typeof getReferenceSnapshot>>;
+    sounds: ReturnType<typeof getSoundsSnapshot>;
+  } | null = null;
+  const loadKnowledgeSources = async () => {
+    if (knowledgeSourcesCache) {
+      return knowledgeSourcesCache;
+    }
+    const [reference, sounds] = await Promise.all([getReferenceSnapshot(), Promise.resolve(getSoundsSnapshot())]);
+    knowledgeSourcesCache = { reference, sounds };
+    return knowledgeSourcesCache;
+  };
   const isStarted = (): boolean => {
     if (hostContext?.started) {
       return true;
@@ -262,6 +275,7 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
       };
     },
     applyStrudelChange,
+    getKnowledgeSources: loadKnowledgeSources,
   });
 
   const listeners = new Set<(event: RunnerEvent) => void>();

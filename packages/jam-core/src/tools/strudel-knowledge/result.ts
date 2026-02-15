@@ -48,3 +48,14 @@ export function toKnowledgeNotFound(query: string, suggestions: string[]) {
     sources: ['doc.json', 'soundMap'],
   };
 }
+
+export function toKnowledgeUnavailable(query: string) {
+  return {
+    ok: false as const,
+    query,
+    reason: 'knowledge_sources_unavailable' as const,
+    answer: 'Strudel knowledge sources are currently unavailable in this runtime.',
+    suggestions: [] as string[],
+    sources: ['doc.json', 'soundMap'],
+  };
+}
