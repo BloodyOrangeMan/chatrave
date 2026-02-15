@@ -126,6 +126,79 @@ export const BUILTIN_FAKE_SCENARIOS: Record<string, FakeScenario> = {
       },
     ],
   },
+  multi_turn_apply_repair_with_knowledge: {
+    name: 'multi_turn_apply_repair_with_knowledge',
+    steps: [
+      {
+        id: 'turn1-apply-initial',
+        response: 'Applying a minimal groove to start.',
+        toolCalls: [
+          {
+            name: 'apply_strudel_change',
+            args: {
+              baseHash: 'fnv1a-811c9dc5',
+              change: {
+                kind: 'full_code',
+                content: 'setcpm(120/4)\nstack(s("bd*4"), s("hh*8"))',
+              },
+            },
+          },
+        ],
+      },
+      {
+        id: 'turn1-final',
+        response: 'Groove started. Kick and hats are stable at setcpm(120/4).',
+      },
+      {
+        id: 'turn2-apply-bad',
+        response: 'Applying clap + texture layer.',
+        toolCalls: [
+          {
+            name: 'apply_strudel_change',
+            args: {
+              baseHash: 'fnv1a-1de70543',
+              change: {
+                kind: 'full_code',
+                content: 'setcpm(120/4)\nstack(s("bd*4"), s("hh*8"), s("definitely_not_a_sound"))',
+              },
+            },
+          },
+        ],
+      },
+      {
+        id: 'turn2-knowledge',
+        response: 'Checking Strudel sound knowledge for a safe replacement.',
+        toolCalls: [
+          {
+            name: 'strudel_knowledge',
+            args: {
+              query: 'definitely_not_a_sound replacement clap',
+            },
+          },
+        ],
+      },
+      {
+        id: 'turn2-apply-repaired',
+        response: 'Applying repaired pattern with known clap sample.',
+        toolCalls: [
+          {
+            name: 'apply_strudel_change',
+            args: {
+              baseHash: 'fnv1a-1de70543',
+              change: {
+                kind: 'full_code',
+                content: 'setcpm(120/4)\nstack(s("bd*4"), s("hh*8"), s("cp*2"))',
+              },
+            },
+          },
+        ],
+      },
+      {
+        id: 'turn2-final',
+        response: 'Repair applied. Groove stays stable and clap layer is active.',
+      },
+    ],
+  },
   malformed_tool_tags: {
     name: 'malformed_tool_tags',
     steps: [

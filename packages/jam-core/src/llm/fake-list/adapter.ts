@@ -85,7 +85,18 @@ function hasToolResult(latestUser: string, toolName: string): boolean {
   return latestUser.includes(`"name": "${toolName}"`) || latestUser.includes(`"name":"${toolName}"`);
 }
 
-function selectScenarioStep(scenario: FakeScenario, request: CompletionRequest): FakeScenarioStep {
+function hasToolOutputField(latestUser: string, field: string, value: string): boolean {
+  return (
+    latestUser.includes(`"${field}": "${value}"`) ||
+    latestUser.includes(`"${field}":"${value}"`)
+  );
+}
+
+function selectScenarioStep(
+  scenario: FakeScenario,
+  request: CompletionRequest,
+  state: { multiTurnPhase: number },
+): FakeScenarioStep {
   const steps = scenario.steps;
   if (!steps.length) {
     throw new Error(`Fake scenario has no steps: ${scenario.name}`);
@@ -96,6 +107,28 @@ function selectScenarioStep(scenario: FakeScenario, request: CompletionRequest):
 
   const latestUser = latestUserContent(request.messages);
   const hasToolResults = latestUser.includes('Tool results:');
+  if (scenario.name === 'multi_turn_apply_repair_with_knowledge') {
+    if (!hasToolResults) {
+      return state.multiTurnPhase === 0 ? steps[0] : steps[2];
+    }
+    if (hasToolResult(latestUser, 'strudel_knowledge')) {
+      return steps[4];
+    }
+    if (
+      hasToolResult(latestUser, 'apply_strudel_change') &&
+      hasToolOutputField(latestUser, 'errorCode', 'UNKNOWN_SOUND')
+    ) {
+      return steps[3];
+    }
+    if (
+      hasToolResult(latestUser, 'apply_strudel_change') &&
+      (hasToolOutputField(latestUser, 'status', 'scheduled') || hasToolOutputField(latestUser, 'status', 'applied'))
+    ) {
+      return state.multiTurnPhase === 0 ? steps[1] : steps[5];
+    }
+    return state.multiTurnPhase === 0 ? steps[1] : steps[5];
+  }
+
   if (!hasToolResults) {
     return steps[0];
   }
@@ -136,6 +169,7 @@ function selectScenarioStep(scenario: FakeScenario, request: CompletionRequest):
 
 export function createFakeListCompletionClient(scenario: FakeScenario): CompletionClient {
   const responseByStepId = new Map<string, string>();
+  const state = { multiTurnPhase: 0 };
   for (const step of scenario.steps) {
     const prefix = step.response ?? '';
     const renderedCalls = renderToolCalls(step);
@@ -145,7 +179,7 @@ export function createFakeListCompletionClient(scenario: FakeScenario): Completi
 
   return {
     async complete(request: CompletionRequest): Promise<string> {
-      const step = selectScenarioStep(scenario, request);
+      const step = selectScenarioStep(scenario, request, state);
 
       if (step.delayMs) {
         await wait(step.delayMs, request.signal);
@@ -170,6 +204,13 @@ export function createFakeListCompletionClient(scenario: FakeScenario): Completi
       const model = new FakeListChatModel({ responses: [response] });
       const lcMessages = request.messages.map(toLcMessage);
       const output = await model.invoke(lcMessages);
+      if (scenario.name === 'multi_turn_apply_repair_with_knowledge') {
+        if (step.id === 'turn1-final') {
+          state.multiTurnPhase = 1;
+        } else if (step.id === 'turn2-final') {
+          state.multiTurnPhase = 2;
+        }
+      }
       return extractText(output);
     },
   };

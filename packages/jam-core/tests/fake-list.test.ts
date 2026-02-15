@@ -79,4 +79,68 @@ describe('fake list completion client', () => {
     expect(final).toContain('```javascript');
     expect(final).toContain('cp*2');
   });
+
+  it('supports multi-turn apply failure, knowledge lookup, and repaired apply', async () => {
+    const client = createFakeListCompletionClient(getFakeScenario('multi_turn_apply_repair_with_knowledge'));
+
+    const turn1Start = await client.complete({
+      ...baseRequest,
+      messages: [{ role: 'user', content: 'start a minimal techno groove' }],
+    });
+    expect(turn1Start).toContain('functions.apply_strudel_change:0');
+    expect(turn1Start).toContain('"baseHash":"fnv1a-811c9dc5"');
+
+    const turn1Final = await client.complete({
+      ...baseRequest,
+      messages: [
+        {
+          role: 'user',
+          content: 'Tool results:\n[{"name":"apply_strudel_change","output":{"status":"scheduled"}}]\n\nProvide final response.',
+        },
+      ],
+    });
+    expect(turn1Final).toContain('Groove started');
+
+    const turn2Start = await client.complete({
+      ...baseRequest,
+      messages: [{ role: 'user', content: 'add clap and a new texture' }],
+    });
+    expect(turn2Start).toContain('functions.apply_strudel_change:0');
+    expect(turn2Start).toContain('definitely_not_a_sound');
+
+    const turn2Knowledge = await client.complete({
+      ...baseRequest,
+      messages: [
+        {
+          role: 'user',
+          content:
+            'Tool results:\n[{"name":"apply_strudel_change","output":{"status":"rejected","errorCode":"UNKNOWN_SOUND","unknownSymbols":["definitely_not_a_sound"]}}]\n\nProvide final response.',
+        },
+      ],
+    });
+    expect(turn2Knowledge).toContain('functions.strudel_knowledge:0');
+
+    const turn2RepairedApply = await client.complete({
+      ...baseRequest,
+      messages: [
+        {
+          role: 'user',
+          content: 'Tool results:\n[{"name":"strudel_knowledge","status":"succeeded"}]\n\nProvide final response.',
+        },
+      ],
+    });
+    expect(turn2RepairedApply).toContain('functions.apply_strudel_change:0');
+    expect(turn2RepairedApply).toContain('cp*2');
+
+    const turn2Final = await client.complete({
+      ...baseRequest,
+      messages: [
+        {
+          role: 'user',
+          content: 'Tool results:\n[{"name":"apply_strudel_change","output":{"status":"scheduled"}}]\n\nProvide final response.',
+        },
+      ],
+    });
+    expect(turn2Final).toContain('Repair applied');
+  });
 });
