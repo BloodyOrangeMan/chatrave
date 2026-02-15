@@ -41,6 +41,10 @@ export function isDevFakeUiEnabled(): boolean {
   return value === '1' || value?.toLowerCase() === 'true';
 }
 
+export function writeDevFakeUiEnabled(enabled: boolean): void {
+  writeLocalStorageValue(DEV_FAKE_UI_KEY, enabled ? 'true' : undefined);
+}
+
 export function isLocalDevBaseUrl(baseUrl?: string): boolean {
   if (!baseUrl) {
     return false;

@@ -42,53 +42,47 @@ vi.mock('../src/worker-client', () => ({
 
 const { mountAgentUi } = await import('../src/index');
 
-describe('tool log details', () => {
+describe('jump to latest behavior', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
-    window.localStorage.clear();
+    localStorage.clear();
     subscribedListener = undefined;
   });
 
-  it('renders completed tool logs as collapsed cards with request and response payload', () => {
+  it('shows jump button when feed is unpinned', () => {
     const container = document.createElement('div');
     mountAgentUi(container);
 
-    expect(subscribedListener).toBeTypeOf('function');
+    const feed = container.querySelector('[data-testid="chat-feed"]') as HTMLDivElement;
+    Object.defineProperty(feed, 'scrollHeight', { configurable: true, writable: true, value: 1000 });
+    Object.defineProperty(feed, 'clientHeight', { configurable: true, writable: true, value: 200 });
+    Object.defineProperty(feed, 'scrollTop', { configurable: true, writable: true, value: 600 });
+    feed.dispatchEvent(new Event('scroll'));
+
+    const jumpWrap = container.querySelector('.agent-jump-wrap') as HTMLDivElement;
+    expect(jumpWrap.style.display).toBe('flex');
+  });
+
+  it('shows jump button when new content arrives while unpinned', () => {
+    const container = document.createElement('div');
+    mountAgentUi(container);
+
+    const feed = container.querySelector('[data-testid="chat-feed"]') as HTMLDivElement;
+    Object.defineProperty(feed, 'scrollHeight', { configurable: true, writable: true, value: 1000 });
+    Object.defineProperty(feed, 'clientHeight', { configurable: true, writable: true, value: 200 });
+    Object.defineProperty(feed, 'scrollTop', { configurable: true, writable: true, value: 600 });
+    feed.dispatchEvent(new Event('scroll'));
 
     subscribedListener?.({
       type: 'runner.state.changed',
       payload: { runningTurnId: 'turn-1' },
     });
-
     subscribedListener?.({
       type: 'assistant.stream.delta',
-      payload: { turnId: 'turn-1', messageId: 'msg-1', delta: 'Applied.' },
+      payload: { turnId: 'turn-1', messageId: 'msg-1', delta: 'new text' },
     });
 
-    subscribedListener?.({
-      type: 'tool.call.completed',
-      payload: {
-        id: 'tool-1',
-        name: 'read_code',
-        status: 'succeeded',
-        durationMs: 12,
-        request: { path: 'active' },
-        response: { path: 'active', lineCount: 4 },
-      },
-    });
-
-    const toolLog = container.querySelector('[data-testid="tool-log"]') as HTMLDetailsElement | null;
-    expect(toolLog).toBeTruthy();
-    expect(toolLog?.open).toBe(false);
-
-    toolLog!.open = true;
-    toolLog!.dispatchEvent(new Event('toggle'));
-
-    const text = toolLog?.textContent ?? '';
-    expect(text).toContain('read_code');
-    expect(text).toContain('[Tool Request]');
-    expect(text).toContain('"path": "active"');
-    expect(text).toContain('[Tool Response]');
-    expect(text).toContain('"lineCount": 4');
+    const jumpWrap = container.querySelector('.agent-jump-wrap') as HTMLDivElement;
+    expect(jumpWrap.style.display).toBe('flex');
   });
 });

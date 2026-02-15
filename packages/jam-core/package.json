@@ -6,7 +6,8 @@
   "types": "src/index.ts",
   "dependencies": {
     "@chatrave/shared-types": "workspace:*",
-    "@chatrave/storage-local": "workspace:*"
+    "@chatrave/storage-local": "workspace:*",
+    "@langchain/core": "^0.3.56"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",

@@ -8,6 +8,7 @@ export interface OpenRouterClientConfig {
   reasoningEnabled: boolean;
   reasoningEffort: ReasoningEffort;
   baseUrl?: string;
+  extraHeaders?: Record<string, string>;
 }
 
 export interface OpenRouterStreamRequest {
@@ -81,6 +82,7 @@ async function postOpenRouter(
   const headers = {
     'content-type': 'application/json',
     authorization: `Bearer ${config.apiKey}`,
+    ...(config.extraHeaders ?? {}),
   };
 
   logModelInput(body);

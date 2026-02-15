@@ -42,53 +42,38 @@ vi.mock('../src/worker-client', () => ({
 
 const { mountAgentUi } = await import('../src/index');
 
-describe('tool log details', () => {
+describe('chat persistence', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
-    window.localStorage.clear();
+    localStorage.clear();
     subscribedListener = undefined;
   });
 
-  it('renders completed tool logs as collapsed cards with request and response payload', () => {
-    const container = document.createElement('div');
-    mountAgentUi(container);
-
-    expect(subscribedListener).toBeTypeOf('function');
+  it('restores messages after remount', () => {
+    const firstContainer = document.createElement('div');
+    mountAgentUi(firstContainer);
 
     subscribedListener?.({
       type: 'runner.state.changed',
       payload: { runningTurnId: 'turn-1' },
     });
-
     subscribedListener?.({
       type: 'assistant.stream.delta',
-      payload: { turnId: 'turn-1', messageId: 'msg-1', delta: 'Applied.' },
+      payload: { turnId: 'turn-1', messageId: 'msg-1', delta: 'Persist me' },
     });
-
     subscribedListener?.({
-      type: 'tool.call.completed',
+      type: 'assistant.turn.completed',
       payload: {
-        id: 'tool-1',
-        name: 'read_code',
-        status: 'succeeded',
-        durationMs: 12,
-        request: { path: 'active' },
-        response: { path: 'active', lineCount: 4 },
+        turnId: 'turn-1',
+        messageId: 'msg-1',
+        status: 'completed',
+        timing: { startedAt: 1, endedAt: 2, durationMs: 1 },
+        content: 'Persist me',
       },
     });
 
-    const toolLog = container.querySelector('[data-testid="tool-log"]') as HTMLDetailsElement | null;
-    expect(toolLog).toBeTruthy();
-    expect(toolLog?.open).toBe(false);
-
-    toolLog!.open = true;
-    toolLog!.dispatchEvent(new Event('toggle'));
-
-    const text = toolLog?.textContent ?? '';
-    expect(text).toContain('read_code');
-    expect(text).toContain('[Tool Request]');
-    expect(text).toContain('"path": "active"');
-    expect(text).toContain('[Tool Response]');
-    expect(text).toContain('"lineCount": 4');
+    const secondContainer = document.createElement('div');
+    mountAgentUi(secondContainer);
+    expect(secondContainer.textContent).toContain('Persist me');
   });
 });
