@@ -86,7 +86,6 @@ fi
 
 # Strudel Astro typically runs on 4321; keep a sane default and print hint.
 STRUDEL_URL="http://localhost:4321/"
-OPENROUTER_BASE_URL="${CHATRAVE_OPENROUTER_BASE_URL:-http://127.0.0.1:8787/api/v1}"
 MOCK_SCENARIO="${CHATRAVE_MOCK_SCENARIO:-successful_jam_apply}"
 
 echo
@@ -99,10 +98,10 @@ printf '%s\n' "Manual browser check:"
 printf '%s\n' "  1) Open ${STRUDEL_URL}"
 printf '%s\n' "  2) Open the 'agent' tab"
 printf '%s\n' "  3) If agent does not auto-load or mock LLM is wrong, run once in browser console:"
-printf '     localStorage.setItem("chatraveAgentModuleUrl", "%ssrc/index.ts"); localStorage.setItem("chatraveOpenRouterBaseUrl", "%s"); localStorage.setItem("chatraveMockLlmScenario", "%s"); location.reload();\n' "${AGENT_URL}" "${OPENROUTER_BASE_URL}" "${MOCK_SCENARIO}"
+printf '     localStorage.setItem("chatraveAgentModuleUrl", "%ssrc/index.ts"); localStorage.setItem("chatraveMockLlmScenario", "%s"); localStorage.setItem("chatraveDevFakeUiEnabled", "true"); location.reload();\n' "${AGENT_URL}" "${MOCK_SCENARIO}"
 echo
 printf '%s\n' "Tip: override defaults at launch:"
-printf '%s\n' "  CHATRAVE_OPENROUTER_BASE_URL=http://localhost:8787/api/v1 CHATRAVE_MOCK_SCENARIO=read_then_apply_success tools/run-dev.sh"
+printf '%s\n' "  CHATRAVE_MOCK_SCENARIO=read_then_apply_success tools/run-dev.sh"
 
 echo
 echo "Streaming logs (Ctrl+C to stop both):"

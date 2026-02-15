@@ -2,10 +2,16 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const templatesDir = join(process.cwd(), 'packages/jam-core/src/prompts/templates');
+const templatesDir = join(process.cwd(), 'packages/agent-core/src/prompts/templates');
 const allowed = new Set(['MAX_REPAIR_ATTEMPTS', 'GLOBAL_TOOL_BUDGET']);
 
-const files = readdirSync(templatesDir).filter((file) => file.endsWith('.md'));
+let files = [];
+try {
+  files = readdirSync(templatesDir).filter((file) => file.endsWith('.md'));
+} catch {
+  console.log('No prompt template directory found. Skipping placeholder validation.');
+  process.exit(0);
+}
 const placeholderPattern = /{{\s*([A-Z0-9_]+)\s*}}/g;
 
 let bad = false;

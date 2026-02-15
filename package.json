@@ -10,11 +10,9 @@
     "check:secrets": "bash tools/check-secrets.sh",
     "check:dev-fake-boundary": "node tools/check-dev-fake-boundary.mjs",
     "check:prompt-placeholders": "node tools/check-prompt-placeholders.mjs",
-    "ci": "pnpm run check:strudel-boundary && pnpm run check:secrets && pnpm run check:dev-fake-boundary && pnpm run check:prompt-placeholders && pnpm run typecheck && pnpm run test",
-    "mock:llm": "node scripts/mock-llm-server.mjs"
+    "ci": "pnpm run check:strudel-boundary && pnpm run check:secrets && pnpm run check:dev-fake-boundary && pnpm run check:prompt-placeholders && pnpm run typecheck && pnpm run test"
   },
   "devDependencies": {
-    "@langchain/core": "^0.3.56",
     "@types/node": "^22.13.8",
     "jsdom": "^26.0.0",
     "typescript": "^5.7.3",
