@@ -8,9 +8,6 @@ const { createAgentRunnerMock } = vi.hoisted(() => ({
 
 vi.mock('@strudel/transpiler/transpiler.mjs', () => ({
   transpiler: (input: string) => {
-    if (input.includes('definitely_not_a_sound')) {
-      throw new Error('Unknown sound: definitely_not_a_sound');
-    }
     if (input.includes('__unknown__')) {
       throw new Error('__unknown__ is not defined');
     }
@@ -47,6 +44,7 @@ function buildSettings(): AgentSettings {
 
 function setupCapturedApply(
   initialCode = 's("bd")',
+  options?: { soundsAvailable?: string[]; exposeSoundMap?: boolean },
 ): {
   apply: (
     input: { change: { kind: 'patch' | 'full_code'; content: string } },
@@ -94,6 +92,19 @@ function setupCapturedApply(
     throw new Error('Failed to capture applyStrudelChange');
   }
 
+  const soundsAvailable = options?.soundsAvailable ?? ['bd', 'hh', 'cp', 'triangle'];
+  const exposeSoundMap = options?.exposeSoundMap ?? true;
+  (window as Window & { strudelMirror?: unknown }).strudelMirror = exposeSoundMap
+    ? {
+        repl: {
+          soundMap: {
+            get: () =>
+              Object.fromEntries(soundsAvailable.map((name) => [name, { data: { type: 'sample' }, onTrigger: vi.fn() }])),
+          },
+        },
+      }
+    : { repl: {} };
+
   return { apply: capturedApply, editor, handleEvaluate };
 }
 
@@ -101,6 +112,8 @@ describe('worker-client apply validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    localStorage.clear();
+    delete (window as Window & { strudelMirror?: unknown }).strudelMirror;
   });
 
   it('rejects malformed stack code (missing comma) and keeps active code unchanged', async () => {
@@ -168,7 +181,7 @@ describe('worker-client apply validation', () => {
     expect(result.diagnostics?.[0]).toContain('__unknown__ is not defined');
   });
 
-  it('preserves unknown sound diagnostics from dry-run validation', async () => {
+  it('rejects sounds that are not currently loaded', async () => {
     const { apply, editor } = setupCapturedApply('s("bd")');
     const result = await apply({
       change: { kind: 'full_code', content: 'stack(s("bd*4"), s("definitely_not_a_sound"))' },
@@ -178,7 +191,23 @@ describe('worker-client apply validation', () => {
       throw new Error('Expected rejected result');
     }
     expect(result.phase).toBe('validate');
-    expect(result.diagnostics).toEqual(['Unknown sound: definitely_not_a_sound']);
+    expect(result.diagnostics).toEqual(['Unknown sound(s): definitely_not_a_sound']);
+    expect(result.unknownSymbols).toEqual(['definitely_not_a_sound']);
+    expect(editor.code).toBe('s("bd")');
+  });
+
+  it('rejects apply when loaded sound inventory is unavailable (fail-safe)', async () => {
+    const { apply, editor } = setupCapturedApply('s("bd")', { exposeSoundMap: false });
+    const result = await apply({
+      change: { kind: 'full_code', content: 'stack(s("bd*4"), s("hh*8"), s("cp*2"))' },
+    });
+    expect(result.status).toBe('rejected');
+    if (result.status !== 'rejected') {
+      throw new Error('Expected rejected result');
+    }
+    expect(result.phase).toBe('validate');
+    expect(result.diagnostics?.[0]).toContain('Loaded sound inventory unavailable');
+    expect(result.unknownSymbols).toEqual(['bd', 'hh', 'cp']);
     expect(editor.code).toBe('s("bd")');
   });
 
@@ -210,6 +239,22 @@ stack(kick, hats)`;
     expect(handleEvaluate).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts setcpm(120/4) on the first line and schedules apply', async () => {
+    const { apply, editor, handleEvaluate } = setupCapturedApply('s("bd")');
+    const withTempoFirstLine = `setcpm(120/4)
+stack(
+  s("bd*4"),
+  s("hh*8")
+)`;
+
+    const result = await apply({ change: { kind: 'full_code', content: withTempoFirstLine } });
+    expect(result.status).toBe('scheduled');
+    vi.advanceTimersByTime(600);
+    expect(editor.code).toBe(withTempoFirstLine);
+    expect(editor.setCode).toHaveBeenCalledWith(withTempoFirstLine);
+    expect(handleEvaluate).toHaveBeenCalledTimes(1);
+  });
+
   it('schedules valid code and applies quantized update after delay', async () => {
     const { apply, editor, handleEvaluate } = setupCapturedApply('s("bd")');
     const valid = `stack(
@@ -232,4 +277,5 @@ stack(kick, hats)`;
     expect(editor.setCode).toHaveBeenCalledWith(valid);
     expect(handleEvaluate).toHaveBeenCalledTimes(1);
   });
+
 });

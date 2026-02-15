@@ -1,6 +1,7 @@
 import { createAgentRunner } from '@chatrave/jam-core';
 import type { AgentSettings, ReplSnapshot, RunnerEvent } from '@chatrave/shared-types';
 import { transpiler } from '@strudel/transpiler/transpiler.mjs';
+import { readRuntimeOverrides } from './runtime-overrides';
 
 export interface AgentHostContext {
   started?: boolean;
@@ -20,6 +21,81 @@ export interface RunnerWorkerClient {
 type HostApplyResult =
   | { status: 'scheduled' | 'applied'; applyAt?: string; diagnostics?: string[] }
   | { status: 'rejected'; phase?: string; diagnostics?: string[]; unknownSymbols?: string[] };
+
+type StrudelWindow = Window & {
+  strudelMirror?: {
+    repl?: {
+      state?: Record<string, unknown>;
+      soundMap?: { get?: () => Record<string, unknown> | undefined };
+      sounds?: Record<string, unknown>;
+      start?: () => void;
+      toggle?: () => void;
+    };
+  };
+  soundMap?: { get?: () => Record<string, unknown> | undefined };
+  __strudelSoundMap?: { get?: () => Record<string, unknown> | undefined } | Record<string, unknown>;
+};
+
+function extractSoundNames(code: string): string[] {
+  const names = new Set<string>();
+  const soundCallRegex = /\bs\s*\(([\s\S]*?)\)/g;
+  let soundCallMatch: RegExpExecArray | null;
+
+  while ((soundCallMatch = soundCallRegex.exec(code)) !== null) {
+    const args = soundCallMatch[1] ?? '';
+    const stringLiteralRegex = /(["'`])((?:\\.|(?!\1)[\s\S])*)\1/g;
+    let stringMatch: RegExpExecArray | null;
+    while ((stringMatch = stringLiteralRegex.exec(args)) !== null) {
+      const source = stringMatch[2] ?? '';
+      const tokens = source
+        .split(/\s+/)
+        .map((token) =>
+          token
+            .trim()
+            .replace(/[\[\]\(\)\{\}<>,|]/g, '')
+            .replace(/[*:~].*$/, '')
+            .replace(/^-+|-+$/g, ''),
+        )
+        .filter(Boolean);
+      for (const token of tokens) {
+        if (/^[a-zA-Z0-9_/-]+$/.test(token)) {
+          names.add(token.toLowerCase());
+        }
+      }
+    }
+  }
+
+  return Array.from(names);
+}
+
+function getLoadedSoundNames(): { ok: true; names: Set<string> } | { ok: false; reason: string } {
+  const globalWindow = window as StrudelWindow;
+  const candidates: Array<unknown> = [
+    globalWindow.strudelMirror?.repl?.soundMap,
+    globalWindow.strudelMirror?.repl?.state?.['soundMap'],
+    globalWindow.__strudelSoundMap,
+    globalWindow.soundMap,
+    globalWindow.strudelMirror?.repl?.state?.['sounds'],
+    globalWindow.strudelMirror?.repl?.sounds,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === 'object' && 'get' in candidate && typeof candidate.get === 'function') {
+      const mapValue = candidate.get();
+      if (mapValue && typeof mapValue === 'object') {
+        return { ok: true, names: new Set(Object.keys(mapValue).map((key) => key.toLowerCase())) };
+      }
+    }
+    if (candidate && typeof candidate === 'object') {
+      return { ok: true, names: new Set(Object.keys(candidate).map((key) => key.toLowerCase())) };
+    }
+  }
+
+  return {
+    ok: false,
+    reason: 'Loaded sound inventory unavailable. Refusing apply in fail-safe mode.',
+  };
+}
 
 const dryRunValidateChange = (
   code: string,
@@ -60,6 +136,7 @@ function buildSnapshot(hostContext?: AgentHostContext): ReplSnapshot {
 }
 
 export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: AgentHostContext): RunnerWorkerClient {
+  const runtimeOverrides = readRuntimeOverrides();
   const isStarted = (): boolean => {
     if (hostContext?.started) {
       return true;
@@ -120,6 +197,28 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
       };
     }
 
+    const referencedSounds = extractSoundNames(nextCode);
+    if (referencedSounds.length > 0) {
+      const loadedSounds = getLoadedSoundNames();
+      if (!loadedSounds.ok) {
+        return {
+          status: 'rejected',
+          phase: 'validate',
+          diagnostics: [loadedSounds.reason],
+          unknownSymbols: referencedSounds,
+        };
+      }
+      const unknownSounds = referencedSounds.filter((name) => !loadedSounds.names.has(name));
+      if (unknownSounds.length > 0) {
+        return {
+          status: 'rejected',
+          phase: 'validate',
+          diagnostics: [`Unknown sound(s): ${unknownSounds.join(', ')}`],
+          unknownSymbols: unknownSounds,
+        };
+      }
+    }
+
     const cps = editor.repl?.scheduler?.cps ?? 0.5;
     const cycleMs = Math.max(250, Math.round((1 / Math.max(0.1, cps)) * 1000));
     const delayMs = cycleMs;
@@ -141,6 +240,8 @@ export function createRunnerWorkerClient(settings: AgentSettings, hostContext?: 
 
   const runner = createAgentRunner({
     settings,
+    openRouterBaseUrl: runtimeOverrides.openRouterBaseUrl,
+    openRouterExtraHeaders: runtimeOverrides.openRouterExtraHeaders,
     modelTimeoutMs: 120_000,
     getReplSnapshot: () => buildSnapshot(hostContext),
     readCode: async (input) => {
