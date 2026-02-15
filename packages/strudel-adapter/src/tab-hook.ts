@@ -136,7 +136,7 @@ async function tryFetchJson(url: string): Promise<unknown | null> {
 }
 
 export async function getReferenceSnapshot(): Promise<StrudelReferenceSnapshotItem[]> {
-  const candidates = [new URL('../doc.json', import.meta.url).toString()];
+  const candidates = [new URL('../../../strudel/doc.json', import.meta.url).toString()];
 
   for (const candidate of candidates) {
     const payload = await tryFetchJson(candidate);
