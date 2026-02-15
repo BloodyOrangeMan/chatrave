@@ -56,7 +56,9 @@
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.6 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
   letter-spacing: -0.011em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -208,14 +210,16 @@
 
 /* Empty State */
 .empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 720px);
   justify-content: center;
-  gap: 24px;
-  min-height: 320px;
+  align-content: start;
+  row-gap: 20px;
+  min-height: 100%;
+  width: 100%;
+  box-sizing: border-box;
   text-align: center;
-  padding: 48px 24px;
+  padding: 28px 24px 20px;
   animation: fadeIn 400ms ease-out;
 }
 
@@ -230,6 +234,7 @@
   font-weight: 400;
   line-height: 1.6;
   max-width: 300px;
+  justify-self: center;
   letter-spacing: -0.01em;
 }
 
@@ -244,13 +249,36 @@
   opacity: 0.6;
 }
 
+.empty-welcome {
+  width: 100%;
+  display: grid;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: left;
+  position: relative;
+  z-index: 1;
+}
+
+.empty-welcome p {
+  margin: 0;
+}
+
+.empty-welcome a {
+  color: var(--text);
+  text-decoration: underline;
+}
 
 .chip-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  justify-content: center;
-  max-width: 340px;
+  width: min(560px, 100%);
+  justify-self: center;
+  margin-top: 4px;
+  position: relative;
+  z-index: 1;
 }
 
 .chip {
@@ -258,10 +286,12 @@
   background: var(--panel);
   border-radius: var(--radius-full);
   padding: 8px 16px;
+  width: 100%;
   cursor: pointer;
   color: var(--text);
   font-size: 13px;
   font-weight: 450;
+  text-align: center;
   transition: all var(--transition-fast);
 }
 
@@ -544,7 +574,7 @@
   color: #e2e8f0;
   font-size: 11px;
   line-height: 1.5;
-  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', Monaco, Consolas, monospace;
+  font-family: inherit;
   position: relative;
 }
 
@@ -683,7 +713,7 @@
   border-top: 1px solid var(--line);
   padding: 12px 14px;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 12px;
   background: var(--panel);
   position: relative;
@@ -738,6 +768,46 @@
 
 .send-btn:active {
   background: rgba(130, 170, 255, 0.08);
+}
+
+.voice-btn {
+  width: 44px;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 600;
+  transition: all var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.voice-btn:hover {
+  background: var(--lineHighlight);
+}
+
+.voice-btn.active {
+  border-color: var(--thinking-line);
+  background: var(--thinking-soft);
+  color: var(--thinking);
+}
+
+.voice-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.voice-status {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 6px 14px 0;
+}
+
+.voice-status.error {
+  color: var(--red);
 }
 
 /* Tool Toggle */
@@ -840,6 +910,7 @@
 .icon-btn:focus-visible,
 .mini-copy:focus-visible,
 .send-btn:focus-visible,
+.voice-btn:focus-visible,
 .jump-btn:focus-visible {
   outline: 2px solid var(--thinking);
   outline-offset: 2px;

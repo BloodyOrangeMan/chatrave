@@ -1,3 +1,3 @@
 export * from './types';
-export * from './create-agent-session';
+export * from './create-jam-agent';
 export * from './mock-scenarios';

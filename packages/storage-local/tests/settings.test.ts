@@ -13,6 +13,23 @@ describe('settings validation', () => {
     const settings = validateSettings({ temperature: 9 });
     expect(settings.temperature).toBe(2);
   });
+
+  it('fills voice defaults for legacy settings payloads', () => {
+    const settings = validateSettings({ apiKey: 'abc' } as never);
+    expect(settings.schemaVersion).toBe(2);
+    expect(settings.voice.provider).toBe('web_speech');
+  });
+
+  it('validates voice provider and URLs', () => {
+    const settings = validateSettings({
+      voice: {
+        provider: 'invalid' as never,
+        openaiBaseUrl: 'https://api.openai.com/v1/',
+      } as never,
+    });
+    expect(settings.voice.provider).toBe('web_speech');
+    expect(settings.voice.openaiBaseUrl).toBe('https://api.openai.com/v1');
+  });
 });
 
 describe('redaction', () => {

@@ -8,10 +8,11 @@
 
 ## Current Runtime Flow
 1. User sends a prompt in `apps/agent-web/src/index.ts`.
-2. `apps/agent-web/src/worker-client.ts` creates an `agent-core` session.
-3. `packages/agent-core/src/create-agent-session.ts` calls OpenRouter with AI SDK `streamText`.
-4. Tool calls are executed through `packages/agent-tools/src/dispatcher.ts`.
-5. Apply/read operations run through `packages/strudel-bridge/src/index.ts`.
+2. `apps/agent-web/src/App.tsx` runs chat via `useChat(...)`.
+3. `apps/agent-web/src/worker-client.ts` provides `DirectChatTransport(...)` backed by an agent.
+4. `packages/agent-core/src/create-jam-agent.ts` runs OpenRouter with AI SDK `ToolLoopAgent`.
+5. Tool calls are executed through `packages/agent-tools/src/dispatcher.ts`.
+6. Apply/read operations run through `packages/strudel-bridge/src/index.ts`.
 
 ## Dev Mock Mode
 - Controlled by `apps/agent-web/src/runtime-overrides.ts`.

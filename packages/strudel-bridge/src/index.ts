@@ -24,6 +24,8 @@ type ApplyResult =
 
 type StrudelWindow = Window & {
   strudelMirror?: {
+    code?: string;
+    state?: { code?: string } & Record<string, unknown>;
     repl?: {
       state?: Record<string, unknown>;
       soundMap?: { get?: () => Record<string, unknown> | undefined };
@@ -35,6 +37,36 @@ type StrudelWindow = Window & {
   soundMap?: { get?: () => Record<string, unknown> | undefined };
   __strudelSoundMap?: { get?: () => Record<string, unknown> | undefined } | Record<string, unknown>;
 };
+
+function getActiveCode(hostContext?: AgentHostContext): string {
+  const globalWindow = window as StrudelWindow;
+  const candidates: Array<unknown> = [
+    globalWindow.strudelMirror?.code,
+    globalWindow.strudelMirror?.state?.code,
+    hostContext?.editorRef?.current?.code,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      return candidate;
+    }
+  }
+
+  return '';
+}
+
+function isActivePath(path?: string): boolean {
+  const normalized = (path ?? '').trim().toLowerCase();
+  return (
+    normalized === '' ||
+    normalized === 'active' ||
+    normalized === 'index.js' ||
+    normalized === 'main.js' ||
+    normalized === 'repl' ||
+    normalized === 'current' ||
+    normalized === 'current.js'
+  );
+}
 
 function extractSoundNames(code: string): string[] {
   const names = new Set<string>();
@@ -161,7 +193,7 @@ export function createStrudelBridge(hostContext?: AgentHostContext) {
   }
 
   function getReplSnapshot(): ReplSnapshot {
-    const activeCode = hostContext?.editorRef?.current?.code ?? '';
+    const activeCode = getActiveCode(hostContext);
     const cps = hostContext?.editorRef?.current?.repl?.scheduler?.cps;
     return {
       activeCodeHash: hashString(activeCode),
@@ -173,8 +205,8 @@ export function createStrudelBridge(hostContext?: AgentHostContext) {
   }
 
   async function readCode(input: ReadCodeInput): Promise<unknown> {
-    const activeCode = hostContext?.editorRef?.current?.code ?? '';
-    if (input.path === 'active' || !input.path) {
+    const activeCode = getActiveCode(hostContext);
+    if (isActivePath(input.path)) {
       return {
         path: 'active',
         code: activeCode,
@@ -191,7 +223,7 @@ export function createStrudelBridge(hostContext?: AgentHostContext) {
       throw new Error('Editor context unavailable');
     }
 
-    const activeCode = editor.code ?? '';
+    const activeCode = getActiveCode(hostContext);
     const activeHash = hashString(activeCode);
     if (input.baseHash !== activeHash) {
       return {
@@ -272,10 +304,19 @@ export function createStrudelBridge(hostContext?: AgentHostContext) {
     return { status: 'scheduled', applyAt };
   }
 
+  function clearActiveCode(): void {
+    const editor = hostContext?.editorRef?.current;
+    if (!editor) return;
+    editor.code = '';
+    editor.setCode?.('');
+    hostContext?.handleEvaluate?.();
+  }
+
   return {
     getReplSnapshot,
     readCode,
     applyStrudelChange,
+    clearActiveCode,
     getKnowledgeSources: loadKnowledgeSources,
     isStarted: () => isStarted(hostContext),
     tryStartPlayback: () => tryStartPlayback(hostContext),

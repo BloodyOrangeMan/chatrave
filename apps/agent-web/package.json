@@ -5,13 +5,17 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
+    "@ai-sdk/react": "^3.0.88",
     "@chatrave/agent-core": "workspace:*",
     "@chatrave/agent-tools": "workspace:*",
     "@chatrave/shared-types": "workspace:*",
     "@chatrave/storage-local": "workspace:*",
-    "@chatrave/strudel-bridge": "workspace:*",
     "@chatrave/strudel-adapter": "workspace:*",
-    "@strudel/transpiler": "^1.0.4"
+    "@chatrave/strudel-bridge": "workspace:*",
+    "@strudel/transpiler": "^1.0.4",
+    "ai": "^6.0.86",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 4174",
@@ -21,6 +25,8 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "vite": "^5.4.19"
   }
 }

@@ -7,7 +7,7 @@ Track what is production runtime vs dev-only behavior after the AI SDK clean-sla
 
 | Area | File | Classification | Notes |
 | --- | --- | --- | --- |
-| Agent session runtime | `packages/agent-core/src/create-agent-session.ts` | `production` | AI SDK `streamText` + tool orchestration. |
+| Agent runtime factory | `packages/agent-core/src/create-jam-agent.ts` | `production` | AI SDK `ToolLoopAgent` + OpenRouter provider + tool orchestration. |
 | Tool implementations | `packages/agent-tools/src/**` | `production` | `read_code`, `apply_strudel_change`, `strudel_knowledge`. |
 | Strudel host bridge | `packages/strudel-bridge/src/index.ts` | `production` | REPL snapshot, dry-run validate, quantized apply. |
 | Agent UI | `apps/agent-web/src/index.ts` | `mixed` | Production chat UI + dev controls surface. |
@@ -24,10 +24,11 @@ Track what is production runtime vs dev-only behavior after the AI SDK clean-sla
 
 ## Canonical Production Path
 1. `apps/agent-web/src/index.ts` sends user text.
-2. `apps/agent-web/src/worker-client.ts` builds `createAgentSession(...)`.
-3. `packages/agent-core/src/create-agent-session.ts` calls OpenRouter via AI SDK and executes tools.
-4. `packages/agent-tools/src/dispatcher.ts` dispatches tool calls.
-5. `packages/strudel-bridge/src/index.ts` performs read/apply against in-browser Strudel host.
+2. `apps/agent-web/src/App.tsx` uses `useChat(...)`.
+3. `apps/agent-web/src/worker-client.ts` provides `DirectChatTransport(...)` with `createJamAgent(...)`.
+4. `packages/agent-core/src/create-jam-agent.ts` runs tool loop via AI SDK.
+5. `packages/agent-tools/src/dispatcher.ts` dispatches tool calls.
+6. `packages/strudel-bridge/src/index.ts` performs read/apply against in-browser Strudel host.
 
 ## Dev/Fake Runtime Path
 1. Enable mock LLM in Dev UI toggle.

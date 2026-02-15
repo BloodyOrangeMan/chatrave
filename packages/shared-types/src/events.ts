@@ -30,6 +30,14 @@ export type RunnerEvent =
       payload: { turnId: string; messageId: string; delta: string };
     }
   | {
+      type: 'assistant.thinking.delta';
+      payload: { turnId: string; messageId: string; delta: string };
+    }
+  | {
+      type: 'assistant.thinking.completed';
+      payload: { turnId: string; messageId: string };
+    }
+  | {
       type: 'assistant.turn.completed';
       payload: AssistantTurnState & { content: string; completedReason?: 'normal' | 'forced_final' | 'fallback_final' };
     }

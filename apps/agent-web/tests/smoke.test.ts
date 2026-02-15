@@ -1,14 +1,22 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@strudel/transpiler/transpiler.mjs', () => ({
-  transpiler: (input: string) => ({ output: input }),
+const registerAgentTabRenderer = vi.fn();
+const injectAgentThemeColors = vi.fn();
+
+vi.mock('@chatrave/strudel-adapter', () => ({
+  registerAgentTabRenderer,
+  injectAgentThemeColors,
 }));
 
-const { initAgentTab } = await import('../src');
+vi.mock('../src/App', () => ({
+  AgentApp: () => null,
+}));
 
-describe('agent-web', () => {
-  it('registers init function without throwing', () => {
-    expect(() => initAgentTab()).not.toThrow();
+describe('agent-web bootstrap', () => {
+  it('registers tab renderer on import', async () => {
+    await import('../src/index');
+    expect(registerAgentTabRenderer).toHaveBeenCalledTimes(1);
+    expect(injectAgentThemeColors).toHaveBeenCalledTimes(1);
   });
 });

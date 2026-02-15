@@ -16,7 +16,8 @@ import {
 } from './runtime-overrides';
 import { clearChatSession, loadChatSession, saveChatSession } from './chat-session-store';
 import { formatJsonBlock } from './ui-helpers';
-import { IconCopy, IconRefresh, IconTrash, IconSettings, IconWrench, IconAgent, IconUser } from './icons';
+import { IconCopy, IconRefresh, IconTrash, IconSettings, IconWrench, IconAgent, IconUser, IconMic, IconMicOff } from './icons';
+import { useVoiceInput } from './voice/use-voice-input';
 
 type ToolView = {
   id: string;
@@ -28,6 +29,7 @@ type ToolView = {
 };
 
 const EMPTY_HINT_CHIPS = ['Give me a techno beat', 'Add a bassline layer', 'Make it more minimal', 'Explain this pattern'];
+const TUTORIAL_URL = '/workshop/getting-started/';
 
 function cookLabel(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
@@ -50,6 +52,14 @@ function reasoningParts(message: UIMessage): string {
     .filter((part): part is { type: 'reasoning'; text: string } => part?.type === 'reasoning' && typeof part.text === 'string')
     .map((part) => part.text)
     .join('');
+}
+
+function cookedLabelFromMessage(message: UIMessage): string | undefined {
+  if (!message || typeof message !== 'object') return undefined;
+  const metadata = (message as { metadata?: unknown }).metadata;
+  if (!metadata || typeof metadata !== 'object') return undefined;
+  const label = (metadata as { cookedLabel?: unknown }).cookedLabel;
+  return typeof label === 'string' && label.trim() ? label : undefined;
 }
 
 function toolParts(message: UIMessage): ToolView[] {
@@ -198,19 +208,20 @@ function MessageBubble({
 function ChatRuntimePane({
   runtime,
   expandToolsByDefault,
+  settings,
 }: {
   runtime: ChatRuntime;
   expandToolsByDefault: boolean;
+  settings: AgentSettings;
 }) {
   const [draft, setDraft] = useState('');
-  const [cookMap, setCookMap] = useState<Record<string, string>>({});
   const [isComposing, setIsComposing] = useState(false);
   const turnStartRef = useRef<number | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [pinnedToBottom, setPinnedToBottom] = useState(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
-  const { messages, sendMessage, stop, regenerate, status, error } = useChat<any>({
+  const { messages, setMessages, sendMessage, stop, regenerate, status, error } = useChat<any>({
     messages: loadChatSession() as UIMessage[],
     transport: runtime.transport,
     onFinish: ({ message }) => {
@@ -218,7 +229,17 @@ function ChatRuntimePane({
         const duration = Date.now() - turnStartRef.current;
         // Only record if duration is reasonable (less than 10 minutes)
         if (duration > 0 && duration < 600000) {
-          setCookMap((prev) => ({ ...prev, [message.id]: cookLabel(duration) }));
+          const cooked = cookLabel(duration);
+          setMessages((prevMessages) =>
+            prevMessages.map((item) => {
+              if (item.id !== message.id) return item;
+              const nextMetadata =
+                item.metadata && typeof item.metadata === 'object'
+                  ? { ...(item.metadata as Record<string, unknown>), cookedLabel: cooked }
+                  : { cookedLabel: cooked };
+              return { ...item, metadata: nextMetadata };
+            }),
+          );
         }
       }
       turnStartRef.current = null;
@@ -243,10 +264,18 @@ function ChatRuntimePane({
     const value = text.trim();
     if (!value) return;
     if (status === 'streaming' || status === 'submitted') return;
+    setDraft('');
     turnStartRef.current = Date.now();
     await sendMessage({ text: value });
-    setDraft('');
   };
+
+  const voice = useVoiceInput({
+    settings,
+    disabled: status === 'streaming' || status === 'submitted',
+    onTranscript: (text) => {
+      setDraft((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
+    },
+  });
 
   return (
     <>
@@ -264,6 +293,39 @@ function ChatRuntimePane({
         {messages.length === 0 ? (
           <div className="empty-state">
             <div className="empty-title">Start jamming with text.</div>
+            <div className="empty-welcome">
+              <p>
+                You have found <span className="underline">strudel</span>, a live coding platform to write dynamic music pieces in
+                the browser. To get started: <span className="underline">1. hit play</span> -{' '}
+                <span className="underline">2. change something</span> - <span className="underline">3. hit update</span>
+              </p>
+              <p>
+                Check out the{' '}
+                <a href={TUTORIAL_URL} target="_blank" rel="noreferrer">
+                  interactive tutorial
+                </a>{' '}
+                and join the{' '}
+                <a href="https://discord.com/invite/HGEdXmRkzT" target="_blank" rel="noreferrer">
+                  discord channel
+                </a>{' '}
+                to ask questions or give feedback.
+              </p>
+              <p>
+                Strudel is a JavaScript version of{' '}
+                <a href="https://tidalcycles.org/" target="_blank" rel="noreferrer">
+                  tidalcycles
+                </a>
+                . It is free/open source software under the{' '}
+                <a
+                  href="https://codeberg.org/uzu/strudel/src/branch/main/LICENSE"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  GNU Affero General Public License
+                </a>
+                .
+              </p>
+            </div>
             <div className="chip-row">
               {EMPTY_HINT_CHIPS.map((chip) => (
                 <button key={chip} type="button" className="chip" onClick={() => setDraft(chip)}>
@@ -278,7 +340,7 @@ function ChatRuntimePane({
           <MessageBubble
             key={message.id}
             message={message}
-            cooked={cookMap[message.id]}
+            cooked={cookedLabelFromMessage(message)}
             expandToolsByDefault={expandToolsByDefault}
             onRegenerate={(id) => {
               turnStartRef.current = Date.now();
@@ -325,6 +387,15 @@ function ChatRuntimePane({
         />
         <button
           type="button"
+          className={`voice-btn ${voice.status === 'listening' ? 'active' : ''}`}
+          title={voice.status === 'listening' ? 'Stop recording' : 'Start voice input'}
+          onClick={() => void voice.toggle()}
+          disabled={status === 'streaming' || status === 'submitted' || voice.status === 'transcribing'}
+        >
+          {voice.status === 'listening' ? <IconMicOff /> : <IconMic />}
+        </button>
+        <button
+          type="button"
           className="send-btn"
           onClick={() => {
             if (status === 'streaming' || status === 'submitted') {
@@ -337,6 +408,9 @@ function ChatRuntimePane({
           {status === 'streaming' || status === 'submitted' ? 'Stop' : 'Send'}
         </button>
       </div>
+      {voice.status === 'listening' ? <div className="voice-status">Listening...</div> : null}
+      {voice.status === 'transcribing' ? <div className="voice-status">Transcribing...</div> : null}
+      {voice.error ? <div className="voice-status error">{voice.error}</div> : null}
     </>
   );
 }
@@ -358,6 +432,7 @@ export function AgentApp({ hostContext }: { hostContext?: AgentHostContext }) {
   };
 
   const clearAll = (): void => {
+    runtime.clearActiveCode();
     clearChatSession();
     setSessionEpoch((value) => value + 1);
     bumpRuntime();
@@ -432,6 +507,52 @@ export function AgentApp({ hostContext }: { hostContext?: AgentHostContext }) {
             API key
             <input type="password" value={settings.apiKey} onChange={(event) => patchSettings({ apiKey: event.target.value })} />
           </label>
+          <label>
+            Voice provider
+            <select
+              value={settings.voice.provider}
+              onChange={(event) =>
+                patchSettings({ voice: { ...settings.voice, provider: event.target.value as AgentSettings['voice']['provider'] } })
+              }
+            >
+              <option value="web_speech">Web Speech</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </label>
+          <label>
+            Voice language (optional, blank = auto)
+            <input
+              value={settings.voice.language}
+              onChange={(event) => patchSettings({ voice: { ...settings.voice, language: event.target.value } })}
+              placeholder="e.g. en-US / zh-CN"
+            />
+          </label>
+          {settings.voice.provider === 'openai' ? (
+            <>
+              <label>
+                OpenAI voice API key
+                <input
+                  type="password"
+                  value={settings.voice.openaiApiKey}
+                  onChange={(event) => patchSettings({ voice: { ...settings.voice, openaiApiKey: event.target.value } })}
+                />
+              </label>
+              <label>
+                OpenAI voice base URL
+                <input
+                  value={settings.voice.openaiBaseUrl}
+                  onChange={(event) => patchSettings({ voice: { ...settings.voice, openaiBaseUrl: event.target.value } })}
+                />
+              </label>
+              <label>
+                OpenAI voice model
+                <input
+                  value={settings.voice.openaiModel}
+                  onChange={(event) => patchSettings({ voice: { ...settings.voice, openaiModel: event.target.value } })}
+                />
+              </label>
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -481,7 +602,12 @@ export function AgentApp({ hostContext }: { hostContext?: AgentHostContext }) {
         </div>
       ) : null}
 
-      <ChatRuntimePane key={`${runtimeEpoch}:${sessionEpoch}`} runtime={runtime} expandToolsByDefault={expandedTools} />
+      <ChatRuntimePane
+        key={`${runtimeEpoch}:${sessionEpoch}`}
+        runtime={runtime}
+        expandToolsByDefault={expandedTools}
+        settings={settings}
+      />
 
       <label className="inline tool-toggle">
         <input type="checkbox" checked={expandedTools} onChange={(event) => setExpandedTools(event.target.checked)} />

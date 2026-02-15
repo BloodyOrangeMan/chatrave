@@ -1,82 +1,75 @@
-# CLAUDE.md - Strudel Jam Agent (Merged Master Spec)
+# AGENTS.md - Strudel Jam Agent (Current Architecture)
 
 ## Goal
 Build an offline-first, in-browser Strudel REPL experience with a side-tab Jam Agent for real-time music jamming.
 
 Reference docs:
-- `ARCHITECTURE.md`
-- `STRUDEL_KNOWLEDGE_TOOL_SPEC.md`
-- `SYSTEM_PROMT.md`
 - `UIUX.md`
-- `docs/DEV_FAKE_BOUNDARY.md` (dev/fake vs production boundary tracker and removal playbooks)
+- `STRUDEL_KNOWLEDGE_TOOL_SPEC.md`
+- `docs/DEV_FAKE_BOUNDARY.md`
+- `docs/AGENT_INTEGRATION_GUIDE.md`
 
 Hard constraints:
 - Keep `strudel/` as an intact, read-only git submodule.
 - Reuse original Strudel code; do not reimplement Strudel.
 - Only online dependency is LLM API calls (user-provided key).
-- Everything else runs locally in browser (engine, validation, storage, skills, history).
+- Everything else runs locally in browser (validation, tool orchestration, storage, chat state).
 
 ---
 
 ## Product Requirements
 
 ### Side-Tab Agent in Original Strudel UI
-- Agent must live inside Strudel side panel/tab system.
-- Keep editor/transport/audio controls as primary surface.
-- Reuse existing panel open/close/resize behavior.
+- Agent lives in Strudel side panel/tab system.
+- Editor/transport/audio controls remain the primary surface.
+- Reuse panel open/close/resize behavior from Strudel UI.
 
 ### Real-Time Jamming
 - Music loops continuously.
-- User interacts by text (and optionally voice in later phase).
-- Agent proposes code changes safely without breaking groove.
+- User interacts by text.
+- Agent proposes and applies safe code changes without breaking groove continuity.
 
 ### Safety and Apply Model
 - Never apply generated code directly to active playback.
-- Use shadow buffer + DRY RUN validation first.
-- On success: quantized swap at musical boundary.
-- On failure: keep current audio, return structured diagnostics, repair and retry.
+- Use dry-run validation first.
+- On success: quantized apply at musical boundary.
+- On failure: keep current audio unchanged and return structured diagnostics.
 
 ### Chat + Tool Transparency
-- ChatGPT-quality core chat behaviors:
-  - streaming responses
-  - stop generation
-  - regenerate
-  - retry failed send
-  - markdown/code rendering + copy
-- Show explicit tool activity per assistant message.
-- Tool logs appear only after completion, collapsed by default.
+- Streaming responses.
+- Stop generation.
+- Regenerate/retry behavior.
+- Markdown/code rendering + copy.
+- Tool logs shown per assistant message.
+- Tool logs are shown only for terminal states and collapsed by default.
 
 ### Per-Message Thinking Time
-- Every assistant message must include:
-  - `Cooked for X m X s`
-- Derived from turn start/end timestamps.
+- Every assistant response includes `Cooked for X m X s`.
 
 ### LLM Settings
-Settings panel must support:
-- provider selection (OpenRouter first)
-- model selection
-- reasoning mode option (fast/balanced/deep)
-- temperature
-- API key input (stored locally only)
+- OpenRouter model setting.
+- Reasoning mode (`fast|balanced|deep`).
+- Temperature.
+- API key (local storage only).
 
 ---
 
 ## UX Rules (Authoritative)
 
 ### Tool Log UX
-- No pending/running tool rows in UI.
-- Only terminal tool states are shown (`succeeded|failed|canceled`).
-- Expanded log shows sanitized input/output JSON.
-- Redact secrets (`apiKey`, tokens, credentials) in view and copy output.
+- No pending/running tool rows.
+- Show terminal states only (`succeeded|failed|canceled`).
+- Expanded log includes sanitized input/output JSON.
+- Redact secrets (`apiKey`, tokens, credentials) in UI and copy output.
 
 ### Composer UX
 - Enter sends.
-- Shift+Enter newline.
+- Shift+Enter inserts newline.
 - IME-safe send behavior.
 - During stream: send button becomes stop.
 
 ### Autoscroll UX
-- Pin to bottom only when user is near bottom.
+- Pin-to-bottom only when user is near bottom.
 - Preserve scroll when user scrolled up.
 - Show jump-to-latest affordance when unpinned.
 
@@ -87,70 +80,72 @@ Settings panel must support:
 ### Workspace Layout
 ```text
 .
-├─ strudel/                     # upstream submodule (read-only)
+├─ strudel/                       # upstream submodule (read-only)
 ├─ apps/
-│  └─ agent-web/                # UI app (side-tab chat)
+│  └─ agent-web/                  # side-tab UI
 ├─ packages/
-│  ├─ shared-types/             # contracts and schemas
-│  ├─ strudel-adapter/          # only Strudel integration boundary
-│  ├─ jam-core/                 # agent loop, llm, tools, prompt system
-│  └─ storage-local/            # IndexedDB/OPFS/local settings wrappers
-└─ tools/                       # CI guardrails and maintenance scripts
+│  ├─ agent-core/                 # AI SDK session/runner
+│  ├─ agent-tools/                # tool contracts + implementations
+│  ├─ strudel-bridge/             # browser Strudel host integration
+│  ├─ shared-types/               # contracts/events/settings types
+│  ├─ storage-local/              # local persistence wrappers
+│  └─ strudel-adapter/            # reference/sounds snapshots + tab hook
+└─ tools/                         # checks/dev helpers
 ```
 
 ### Boundaries
 - `strudel/`: vendor boundary, no feature edits.
-- `packages/strudel-adapter`: only place touching Strudel internals.
-- `packages/jam-core`: domain logic, tools, orchestration, prompt composition.
-- `apps/agent-web`: presentation layer only.
+- `packages/strudel-bridge`: only place applying/reading runtime Strudel editor state.
+- `packages/agent-tools`: tool logic and validation contracts.
+- `packages/agent-core`: AI SDK orchestration + tool wiring.
+- `apps/agent-web`: presentation layer and UI state.
 
 ### Small-File Rule
-- Prefer < 250 LOC per file.
-- Split by concern (types, validation, side effects, formatting).
-- Avoid monolithic service/tool files.
+- Prefer files under 250 LOC where practical.
+- Split by concern.
+- Avoid monolithic service files.
 
 ---
 
 ## Tooling Contract
 
 ### `read_code(path|query)`
-Read-only inspection tool for code/context discovery before edits.
+Read-only context inspection before edits.
 
-Use cases:
-- locate/edit-target discovery
-- structure inspection before patching
-- ambiguity reduction when apply target is unclear
+### `apply_strudel_change`
+Input:
+- `baseHash`
+- `change.kind`: `full_code | search_replace`
 
-### `apply_strudel_change(change, policy)`
-Single apply tool that:
-1. updates shadow (patch/full),
-2. runs DRY RUN validation,
-3. schedules quantized apply on success,
-4. returns structured rejection on failure.
+Behavior:
+1. validate input,
+2. verify stale base hash against current active hash,
+3. dry-run validate generated code,
+4. verify sound availability,
+5. quantize schedule apply if valid.
 
 Success example:
-- `{ status: "scheduled"|"applied", applyAt, activeUnchangedUntilApply: true }`
+- `{ status: "scheduled"|"applied", applyAt }`
 
 Failure example:
-- `{ status: "rejected", phase, diagnostics, unknownSymbols, suggestedNext? }`
+- `{ status: "rejected", phase, diagnostics, unknownSymbols?, latestCode?, latestHash? }`
 
 ### `strudel_knowledge(query)`
 Single consolidated knowledge tool:
-- free-form query input
-- exact + synonym + fuzzy matching
-- sources: Strudel reference + sounds data
-- reference results must include description and examples (when available)
+- exact + synonym + fuzzy ranking,
+- sources: Strudel reference + sound data,
+- top-k results and formatted answer.
 
-Preferred tool loop (aligned with runtime prompt):
-1. If unsure where/how to edit -> `read_code(...)`
-2. Attempt change via `apply_strudel_change(...)`
-3. If unknown symbol/uncertainty -> `strudel_knowledge(...)`
-4. Retry apply once with repaired change
+Preferred loop:
+1. uncertain target -> `read_code`
+2. attempt `apply_strudel_change`
+3. unknown symbol/sound -> `strudel_knowledge`
+4. retry apply once with repaired change
 
 ---
 
 ## Tool Module Structure (Required)
-Inside `packages/jam-core/src/tools/`:
+Inside `packages/agent-tools/src/`:
 - `dispatcher.ts`
 - `contracts.ts`
 - `apply-strudel-change/`
@@ -174,182 +169,91 @@ Rules:
 
 ---
 
-## Prompt System (Externalized)
+## Prompt and Runtime Policy
 
-Do not hardcode system prompt in runtime TS files.
+### System Prompt Source
+- Runtime system prompt source is `packages/agent-core/src/system-prompt.ts`.
+- Keep prompt text contiguous and explicit.
 
-Use markdown templates under:
-- `packages/jam-core/src/prompts/templates/system.base.md`
-- `packages/jam-core/src/prompts/templates/system.safety.md`
-- `packages/jam-core/src/prompts/templates/system.tools.md`
-- `packages/jam-core/src/prompts/templates/system.music.md`
-- `packages/jam-core/src/prompts/templates/system.style.md`
+### LLM REPL Awareness Policy (Hybrid)
+For each LLM turn:
+- include compact runtime envelope (`activeCodeHash`, playback state, quantize mode, budgets),
+- include full active code only when hash changed since model-known hash,
+- omit full code when hash unchanged.
 
-Runtime flow:
-1. load template segments,
-2. render placeholders,
-3. build final system prompt per request.
-
-`SYSTEM_PROMT.md` can remain as legacy reference, but runtime source of truth must be templates above.
-
----
-
-## LLM REPL Awareness Policy (Hybrid, Mandatory)
-
-Use a hybrid context strategy for every LLM call:
-- Always include a compact runtime context envelope:
-  - `activeCodeHash`, `shadowCodeHash?`
-  - playback state (`started`, `cps/cpm`)
-  - quantize mode
-  - last apply/validation summary
-  - tool budget + repair budget remaining
-- Do **not** include full REPL code by default in every request.
-- Include full active code in snapshot only when active hash changed since the model-known hash.
-- If hash is unchanged, keep snapshot compact (no full code).
-
-Apply safety requirements:
-- `apply_strudel_change` requests must carry `baseHash`.
-- `baseHash` is validated against live active code hash at apply execution time.
-- If `baseHash` is stale, tool must reject with `STALE_BASE_HASH` and include `latestCode/latestHash`.
-- On `STALE_BASE_HASH`, runtime retries once using returned `latestCode/latestHash` (no mandatory `read_code` round trip).
-- On unknown symbol rejection, runtime calls `strudel_knowledge(...)` and retries once.
+Apply safety:
+- `apply_strudel_change` must include `baseHash`.
+- stale hash returns `STALE_BASE_HASH` + latest code/hash.
+- unknown sound returns diagnostics + symbols.
 
 ---
 
 ## Agent Behavior Rules
-1. If edit target is unclear, call `read_code` first.
-2. First attempt: generate conservative valid Strudel code.
+1. If edit target is unclear, call `read_code`.
+2. Generate conservative valid Strudel changes.
 3. Call `apply_strudel_change`.
-4. If rejected:
-   - read diagnostics + unknownSymbols
-   - call `strudel_knowledge` (targeted)
-   - retry apply with bounded attempts
-5. Never claim success unless apply tool returns success.
-6. Response must mention:
-   - what changed
-   - apply timing (quantized boundary)
-   - preserved constraints (tempo/groove/layer stability)
+4. On rejection:
+   - read diagnostics,
+   - query `strudel_knowledge` when needed,
+   - retry within limits.
+5. Never claim success unless apply tool reports scheduled/applied.
+6. Response should mention what changed, apply timing, and preserved groove/tempo constraints.
 
-## LIMITS
-- `MAX_REPAIR_ATTEMPTS`: default `4` (or runtime override via settings).
-- `GLOBAL_TOOL_BUDGET`: default from runtime config.
-
-Enforcement rules:
-- The agent must stop retrying after `MAX_REPAIR_ATTEMPTS` and return the smallest safe fallback.
-- The agent must not exceed `GLOBAL_TOOL_BUDGET`; if budget is near exhaustion, prioritize one final high-probability attempt.
-
----
-
-## Sprint 1 Kickoff Plan (OpenRouter-First Vertical Slice)
-
-### Objective
-Deliver one usable end-to-end slice quickly:
-- side-tab chat in Strudel panel
-- OpenRouter integration
-- agent loop with two tools
-- post-completion tool logs
-- thinking-time label
-
-### Phase 0 - Foundation Guardrails
-- scaffold `apps/agent-web` + `packages/*`
-- add CI rule blocking tracked edits under `strudel/**`
-- define shared contracts in `shared-types`
-
-### Phase 1 - OpenRouter + Streaming Core
-- implement OpenRouter provider client + stream parser
-- implement runner loop and turn timing
-- persist provider/model/temp/api key locally
-
-### Phase 2 - Prompt Externalization
-- create markdown templates
-- implement prompt loader/renderer
-- switch runtime to template-built prompt
-
-### Phase 3 - Tools Vertical Slice
-- implement dispatcher/contracts
-- implement `apply_strudel_change` split pipeline
-- implement `strudel_knowledge` with fuzzy search and source-backed outputs
-
-### Phase 4 - Side-Tab UI and Logs
-- implement chat UI core interactions
-- implement completed-only tool log behavior
-- render per-message `Cooked for X m X s`
-
-### Phase 5 - Persistence and Hardening
-- chat history + settings persistence
-- offline/error states
-- smoke tests + contract tests
+## Limits
+- `MAX_REPAIR_ATTEMPTS`: default 4.
+- `GLOBAL_TOOL_BUDGET`: runtime-configured.
 
 ---
 
 ## Public APIs (High-Level)
 
-### `strudel-adapter`
-- `initStrudelHost(...)`
-- `getCurrentCode()`
-- `dryRunValidate(...)`
-- `applyChange(...)`
-- `getReferenceSnapshot()`
-- `getSoundsSnapshot()`
+### `agent-core`
+- `createJamAgent(...)`
+- `createMockJamAgent(...)`
 
-### `jam-core`
-- `createAgentRunner(...)`
-- `sendUserMessage(...)`
-- `stopGeneration(...)`
-- `retryMessage(...)`
-- `subscribeToEvents(...)`
+### `strudel-bridge`
+- `getReplSnapshot()`
+- `readCode(...)`
+- `applyStrudelChange(...)`
+- `getKnowledgeSources()`
 
-### Event Types (examples)
-- `assistant.stream.delta`
-- `assistant.turn.completed`
-- `tool.call.started`
-- `tool.call.completed`
-- `apply.status.changed`
-- `chat.message.failed`
+### UI Runtime
+- `apps/agent-web` uses `@ai-sdk/react` `useChat(...)`
+- transport is `DirectChatTransport(...)` with in-browser `ToolLoopAgent`
+- tool + reasoning visibility comes from `UIMessage.parts`
 
 ---
 
 ## Testing and Guardrails
 
 ### Mandatory E2E Verification Policy
-- After every completed implementation task, the agent must run E2E verification before claiming completion.
-- If E2E fails:
-  - do not mark task complete
-  - report failure details clearly
-  - fix and rerun E2E until passing or blocked by a stated external constraint
-- Every completion report must include:
-  - E2E suite/scenario executed
-  - pass/fail result
-  - key evidence (critical assertions or outcome summary)
+- After each completed implementation task, run E2E verification before claiming completion.
+- If E2E fails: report, fix, rerun until pass or external blocker.
+- Completion report must include scenario, pass/fail, and evidence.
 
 ### Required Tests
 - tool unit tests (`apply_strudel_change`, `strudel_knowledge`)
-- prompt loader/renderer tests
-- redaction tests
-- adapter contract tests
-- side-tab integration smoke tests
-- end-to-end flow verification after each implementation completion
+- adapter/bridge behavior tests
+- side-tab smoke tests
+- UI tool-log and streaming behavior tests
 
 ### Required CI Checks
 - fail if tracked files under `strudel/**` are changed
-- fail if prompt placeholders are unresolved
-- run tool/adapter contract tests
+- typecheck + tests must pass
 
 ---
 
 ## Deliverables
 - side-tab Jam Agent in original Strudel UI
-- OpenRouter-first agent runtime
-- modular tool architecture
-- externalized prompt templates
+- OpenRouter-first AI SDK runtime
+- modular tool architecture (`agent-tools`)
 - completed-only per-message tool logs
 - thinking-time indicator per assistant message
 - read-only submodule guardrails in CI
 
 ---
 
-## Non-Goals (MVP)
+## Non-Goals (Current)
 - backend infrastructure
 - multi-user collaboration
-- full multi-provider parity in Sprint 1
 - modifying Strudel vendor code for product features

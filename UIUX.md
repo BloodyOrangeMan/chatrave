@@ -5,6 +5,7 @@ Build a ChatGPT-quality chat experience inside Strudel’s existing side panel s
 
 This is **core parity** (not full ChatGPT product parity):
 - streaming responses
+- progressive disclosure thinking window (collapsible, per assistant message)
 - stop generation
 - regenerate
 - retry failed send
@@ -45,6 +46,7 @@ Tool logs are per assistant message, **collapsed by default**, and **only shown 
 ### Message List
 - Roles: `user`, `assistant`.
 - Assistant supports:
+  - streamed thinking window
   - streaming text
   - copy response
   - regenerate
@@ -106,7 +108,13 @@ When expanded, show:
 ---
 
 ## Streaming + Tools Concurrency
-- Assistant text may stream normally.
+- Assistant has two live channels:
+  - thinking stream (collapsible window)
+  - final answer stream (assistant content)
+- Thinking window behavior:
+  - expanded while generation is active
+  - auto-collapses on completion
+  - remains available for manual expand after completion
 - Tool execution is hidden until completion.
 - Completed tool logs appear once terminal state is reached.
 - No “working…” badge, no tool pending indicator, no elapsed timer during run.
@@ -135,6 +143,8 @@ When expanded, show:
   id: string,
   role: "user" | "assistant",
   content: string,
+  thinkingContent?: string,
+  thinkingExpanded?: boolean,
   status?: "sending" | "sent" | "failed",
   createdAt?: number,
   streaming?: boolean
@@ -216,3 +226,5 @@ Rendering rule:
 6. Failed tool logs include retry.
 7. Autoscroll pin/unpin + jump-to-latest works correctly.
 8. No regressions in existing Strudel tabs and panel interactions.
+9. Thinking window streams live and auto-collapses after turn completion.
+10. Thinking window can be expanded after completion and persists across remount.

@@ -1,77 +1,40 @@
-const SESSION_KEY = 'chatrave_agent_chat_session_v1';
+import type { UIMessage } from 'ai';
 
-export interface PersistedToolLog {
-  id: string;
-  name: string;
-  status: 'succeeded' | 'failed';
-  durationMs: number;
-  request?: unknown;
-  response?: unknown;
-  errorMessage?: string;
-  expanded?: boolean;
+const SESSION_KEY = 'chatrave_agent_chat_session_v2';
+
+interface PersistedSession {
+  messages: UIMessage[];
 }
 
-export interface PersistedChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  createdAt: number;
-  streaming?: boolean;
-  failedReason?: string;
-  cookedLabel?: string;
-  sourceUserText?: string;
-  toolLogs: PersistedToolLog[];
-}
-
-export interface PersistedChatSession {
-  messages: PersistedChatMessage[];
-}
-
-function readRawSession(): unknown {
+function readRaw(): unknown {
   try {
     const raw = window.localStorage.getItem(SESSION_KEY);
-    if (!raw) {
-      return null;
-    }
-    return JSON.parse(raw) as unknown;
+    return raw ? (JSON.parse(raw) as unknown) : null;
   } catch {
     return null;
   }
 }
 
-function normalizeSession(raw: unknown): PersistedChatSession {
+function normalize(raw: unknown): PersistedSession {
   if (!raw || typeof raw !== 'object') {
     return { messages: [] };
   }
-  const maybe = raw as { messages?: unknown };
-  if (!Array.isArray(maybe.messages)) {
+  const value = raw as { messages?: unknown };
+  if (!Array.isArray(value.messages)) {
     return { messages: [] };
   }
-  const messages = maybe.messages.filter((item): item is PersistedChatMessage => {
-    if (!item || typeof item !== 'object') {
-      return false;
-    }
-    const msg = item as Partial<PersistedChatMessage>;
-    return (
-      (msg.role === 'user' || msg.role === 'assistant') &&
-      typeof msg.id === 'string' &&
-      typeof msg.content === 'string' &&
-      typeof msg.createdAt === 'number' &&
-      Array.isArray(msg.toolLogs)
-    );
-  });
-  return { messages };
+  return { messages: value.messages as UIMessage[] };
 }
 
-export function loadChatSession(): PersistedChatSession {
-  return normalizeSession(readRawSession());
+export function loadChatSession(): UIMessage[] {
+  return normalize(readRaw()).messages;
 }
 
-export function saveChatSession(session: PersistedChatSession): void {
+export function saveChatSession(messages: UIMessage[]): void {
   try {
-    window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    window.localStorage.setItem(SESSION_KEY, JSON.stringify({ messages }));
   } catch {
-    // Ignore storage write failures.
+    // ignore storage failures
   }
 }
 
@@ -79,6 +42,6 @@ export function clearChatSession(): void {
   try {
     window.localStorage.removeItem(SESSION_KEY);
   } catch {
-    // Ignore storage write failures.
+    // ignore storage failures
   }
 }

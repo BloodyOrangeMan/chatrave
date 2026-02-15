@@ -1,37 +1,34 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { clearChatSession, loadChatSession, saveChatSession } from '../src/chat-session-store';
 
 describe('chat-session-store', () => {
-  afterEach(() => {
+  beforeEach(() => {
     localStorage.clear();
   });
 
-  it('loads empty session by default', () => {
-    expect(loadChatSession()).toEqual({ messages: [] });
+  it('saves and loads ui messages', () => {
+    const messages = [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }];
+    saveChatSession(messages as never);
+    expect(loadChatSession()).toEqual(messages);
   });
 
-  it('saves and loads chat session messages', () => {
-    const session = {
-      messages: [
-        {
-          id: 'm1',
-          role: 'assistant' as const,
-          content: 'hello',
-          createdAt: 1,
-          toolLogs: [],
-        },
-      ],
-    };
-    saveChatSession(session);
-    expect(loadChatSession()).toEqual(session);
+  it('preserves assistant metadata such as cookedLabel', () => {
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        metadata: { cookedLabel: 'Cooked for 0 m 6 s' },
+        parts: [{ type: 'text', text: 'done' }],
+      },
+    ];
+    saveChatSession(messages as never);
+    expect(loadChatSession()).toEqual(messages);
   });
 
-  it('clears persisted session', () => {
-    saveChatSession({
-      messages: [{ id: 'm1', role: 'user', content: 'x', createdAt: 1, toolLogs: [] }],
-    });
+  it('clears session', () => {
+    saveChatSession([{ id: 'm1', role: 'user', parts: [] }] as never);
     clearChatSession();
-    expect(loadChatSession()).toEqual({ messages: [] });
+    expect(loadChatSession()).toEqual([]);
   });
 });
