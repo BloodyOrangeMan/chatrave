@@ -8,8 +8,14 @@ const { createAgentRunnerMock } = vi.hoisted(() => ({
 
 vi.mock('@strudel/transpiler/transpiler.mjs', () => ({
   transpiler: (input: string) => {
+    if (input.includes('definitely_not_a_sound')) {
+      throw new Error('Unknown sound: definitely_not_a_sound');
+    }
     if (input.includes('__unknown__')) {
       throw new Error('__unknown__ is not defined');
+    }
+    if (input.includes('missingGlobal')) {
+      throw new Error('missingGlobal is not defined');
     }
     if (input.includes('s("hh*8")\n  s("cp*2")')) {
       throw new Error('Unexpected token');
@@ -160,6 +166,48 @@ describe('worker-client apply validation', () => {
     }
     expect(result.unknownSymbols).toEqual([]);
     expect(result.diagnostics?.[0]).toContain('__unknown__ is not defined');
+  });
+
+  it('preserves unknown sound diagnostics from dry-run validation', async () => {
+    const { apply, editor } = setupCapturedApply('s("bd")');
+    const result = await apply({
+      change: { kind: 'full_code', content: 'stack(s("bd*4"), s("definitely_not_a_sound"))' },
+    });
+    expect(result.status).toBe('rejected');
+    if (result.status !== 'rejected') {
+      throw new Error('Expected rejected result');
+    }
+    expect(result.phase).toBe('validate');
+    expect(result.diagnostics).toEqual(['Unknown sound: definitely_not_a_sound']);
+    expect(editor.code).toBe('s("bd")');
+  });
+
+  it('preserves undefined global variable diagnostics from dry-run validation', async () => {
+    const { apply, editor } = setupCapturedApply('s("bd")');
+    const result = await apply({
+      change: { kind: 'full_code', content: 'stack(s("bd*4"), missingGlobal)' },
+    });
+    expect(result.status).toBe('rejected');
+    if (result.status !== 'rejected') {
+      throw new Error('Expected rejected result');
+    }
+    expect(result.phase).toBe('validate');
+    expect(result.diagnostics).toEqual(['missingGlobal is not defined']);
+    expect(editor.code).toBe('s("bd")');
+  });
+
+  it('schedules code that defines and uses local variables', async () => {
+    const { apply, editor, handleEvaluate } = setupCapturedApply('s("bd")');
+    const validWithDefs = `const kick = s("bd*4")
+const hats = s("hh*8")
+stack(kick, hats)`;
+
+    const result = await apply({ change: { kind: 'full_code', content: validWithDefs } });
+    expect(result.status).toBe('scheduled');
+    vi.advanceTimersByTime(600);
+    expect(editor.code).toBe(validWithDefs);
+    expect(editor.setCode).toHaveBeenCalledWith(validWithDefs);
+    expect(handleEvaluate).toHaveBeenCalledTimes(1);
   });
 
   it('schedules valid code and applies quantized update after delay', async () => {
