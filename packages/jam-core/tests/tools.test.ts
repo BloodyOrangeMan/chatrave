@@ -30,9 +30,10 @@ describe('tool dispatcher', () => {
       },
     });
 
-    const output = result.output as { status: string; phase?: string };
+    const output = result.output as { status: string; phase?: string; errorCode?: string };
     expect(output.status).toBe('rejected');
     expect(output.phase).toBe('STALE_BASE_HASH');
+    expect(output.errorCode).toBe('STALE_BASE_HASH');
   });
 
   it('preserves rejected host apply diagnostics', async () => {
@@ -57,10 +58,45 @@ describe('tool dispatcher', () => {
       },
     );
 
-    const output = result.output as { status: string; phase?: string; diagnostics?: string[] };
+    const output = result.output as { status: string; phase?: string; diagnostics?: string[]; errorCode?: string };
     expect(output.status).toBe('rejected');
     expect(output.phase).toBe('validate');
+    expect(output.errorCode).toBe('VALIDATION_ERROR');
     expect(output.diagnostics?.[0]).toContain('DRY_RUN_VALIDATE_FAILED');
+  });
+
+  it('labels unknown symbols as UNKNOWN_SOUND with suggested repair', async () => {
+    const currentCode = 's("bd")';
+    const result = await dispatchToolCall(
+      {
+        id: '1d',
+        name: 'apply_strudel_change',
+        input: {
+          currentCode,
+          baseHash: hashString(currentCode),
+          change: { kind: 'full_code', content: 'stack(s("bd"), s("not_loaded"))' },
+        },
+      },
+      {
+        applyStrudelChange: async () => ({
+          status: 'rejected',
+          phase: 'validate',
+          diagnostics: ['Unknown sound(s): not_loaded'],
+          unknownSymbols: ['not_loaded'],
+        }),
+      },
+    );
+
+    const output = result.output as {
+      status: string;
+      errorCode?: string;
+      unknownSymbols?: string[];
+      suggestedNext?: string;
+    };
+    expect(output.status).toBe('rejected');
+    expect(output.errorCode).toBe('UNKNOWN_SOUND');
+    expect(output.unknownSymbols).toEqual(['not_loaded']);
+    expect(output.suggestedNext).toContain('strudel_knowledge');
   });
 
   it('finds reference knowledge by exact match', async () => {

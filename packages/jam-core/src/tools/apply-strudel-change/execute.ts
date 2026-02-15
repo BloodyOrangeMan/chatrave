@@ -21,23 +21,45 @@ export async function executeApplyStrudelChange(
   const validated = validateApplyChange(input);
   if (!validated.ok) {
     const diagnostics = validated.diagnostics ?? ['Unknown validation failure'];
-    const phase = diagnostics.some((item) => item.includes('STALE_BASE_HASH')) ? 'STALE_BASE_HASH' : 'validate';
-    return toApplyRejected(phase, diagnostics, []);
+    const isStaleHash = diagnostics.some((item) => item.includes('STALE_BASE_HASH'));
+    return toApplyRejected(
+      isStaleHash ? 'STALE_BASE_HASH' : 'validate',
+      isStaleHash ? 'STALE_BASE_HASH' : 'VALIDATION_ERROR',
+      diagnostics,
+      [],
+      isStaleHash ? 'Refresh code snapshot and retry with latest baseHash.' : 'Fix diagnostics and retry apply.',
+    );
   }
 
   if (context.applyStrudelChange) {
     try {
       const result = await context.applyStrudelChange(input);
       if (result.status === 'rejected') {
+        const diagnostics = result.diagnostics ?? ['apply rejected'];
+        const unknownSymbols = result.unknownSymbols ?? [];
+        const hasUnknownSound = unknownSymbols.length > 0;
+        const phase = result.phase ?? 'validate';
         return toApplyRejected(
-          result.phase ?? 'validate',
-          result.diagnostics ?? ['apply rejected'],
-          result.unknownSymbols ?? [],
+          phase,
+          hasUnknownSound ? 'UNKNOWN_SOUND' : phase === 'STALE_BASE_HASH' ? 'STALE_BASE_HASH' : 'VALIDATION_ERROR',
+          diagnostics,
+          unknownSymbols,
+          hasUnknownSound
+            ? 'Use strudel_knowledge for the unknown symbol(s) and retry with known sounds.'
+            : phase === 'STALE_BASE_HASH'
+              ? 'Refresh code snapshot and retry with latest baseHash.'
+              : 'Fix diagnostics and retry apply.',
         );
       }
       return toApplyScheduled(result.applyAt ?? new Date().toISOString());
     } catch (error) {
-      return toApplyRejected('execute', [(error as Error).message], []);
+      return toApplyRejected(
+        'execute',
+        'RUNTIME_EXECUTE_ERROR',
+        [(error as Error).message],
+        [],
+        'Keep current audio unchanged and retry with safer minimal change.',
+      );
     }
   }
 
