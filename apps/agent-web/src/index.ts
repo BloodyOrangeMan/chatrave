@@ -2,6 +2,13 @@ import { DEFAULT_AGENT_SETTINGS, type AgentSettings, type RunnerEvent } from '@c
 import { loadSettings, saveSettings } from '@chatrave/storage-local';
 import { registerAgentTabRenderer } from '@chatrave/strudel-adapter';
 import { createRunnerWorkerClient, type AgentHostContext } from './worker-client';
+import {
+  buildScenariosUrl,
+  isLocalDevBaseUrl,
+  readRuntimeOverrides,
+  readRuntimeScenario,
+  writeRuntimeScenario,
+} from './runtime-overrides';
 
 const AGENT_OUTPUT_STORAGE_KEY = 'chatrave_agent_output_v1';
 
@@ -51,6 +58,14 @@ function styleButton(button: HTMLButtonElement): void {
   button.style.cursor = 'pointer';
 }
 
+function formatJsonBlock(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 function isJamPrompt(text: string): boolean {
   return /\b(beat|techno|house|drum|groove|bass|pattern|jam|music|kick|snare|hihat|hh|bd)\b/i.test(text);
 }
@@ -92,14 +107,13 @@ function startPlaybackFromUserGesture(hostContext?: AgentHostContext): void {
   }
 }
 
-function pulseEditorBorder(status: 'scheduled' | 'applied' | 'rejected' | 'missing_apply'): void {
+function pulseEditorBorder(status: 'scheduled' | 'applied' | 'rejected'): void {
   const editorRoot = document.querySelector('.cm-editor') as HTMLElement | null;
   if (!editorRoot) {
     return;
   }
 
-  const color =
-    status === 'rejected' ? '#ff4d4f' : status === 'missing_apply' ? '#faad14' : '#52c41a';
+  const color = status === 'rejected' ? '#ff4d4f' : '#52c41a';
   const previousTransition = editorRoot.style.transition;
   const previousBoxShadow = editorRoot.style.boxShadow;
   editorRoot.style.transition = 'box-shadow 120ms ease-in-out';
@@ -114,6 +128,7 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
   let settings = loadSettings();
   let worker = createRunnerWorkerClient(settings, hostContext);
   let unsubscribeWorker: (() => void) | null = null;
+  let runtimeOverrides = readRuntimeOverrides();
 
   const handleWorkerEvent = (event: RunnerEvent) => {
     if (event.type === 'assistant.stream.delta') {
@@ -134,7 +149,15 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
     }
 
     if (event.type === 'tool.call.completed') {
-      appendOutput(`\n[Tool ${event.payload.name}: ${event.payload.status}]\n`);
+      const requestJson = formatJsonBlock(event.payload.request ?? null);
+      const responseJson = formatJsonBlock(event.payload.response ?? null);
+      const errorLine = event.payload.errorMessage ? `\n[Tool Error]\n${event.payload.errorMessage}\n` : '';
+      appendOutput(
+        `\n[Tool ${event.payload.name}: ${event.payload.status}]` +
+          `\n[Tool Request]\n${requestJson}` +
+          `\n[Tool Response]\n${responseJson}` +
+          `${errorLine}\n`,
+      );
       return;
     }
 
@@ -144,9 +167,7 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
           ? `\n[Apply: scheduled${event.payload.applyAt ? ` at ${event.payload.applyAt}` : ''}]\n`
           : event.payload.status === 'applied'
             ? '\n[Apply: applied]\n'
-            : event.payload.status === 'missing_apply'
-              ? `\n[Apply: missing (${event.payload.reason ?? 'unknown'})]\n`
-              : `\n[Apply: rejected (${event.payload.reason ?? 'unknown'})]\n`;
+            : `\n[Apply: rejected (${event.payload.reason ?? 'unknown'})]\n`;
       appendOutput(line);
       pulseEditorBorder(event.payload.status);
     }
@@ -154,6 +175,7 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
 
   const bindWorker = (nextSettings: AgentSettings): void => {
     unsubscribeWorker?.();
+    runtimeOverrides = readRuntimeOverrides();
     worker = createRunnerWorkerClient(nextSettings, hostContext);
     unsubscribeWorker = worker.subscribe(handleWorkerEvent);
   };
@@ -222,17 +244,93 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
     mode.append(item);
   }
 
+  const devScenarioSelect = document.createElement('select');
+  styleControl(devScenarioSelect);
+  const devScenarioStatus = document.createElement('div');
+  devScenarioStatus.style.fontSize = '11px';
+  devScenarioStatus.style.color = '#d0d0d0';
+  const devScenarioLabel = createLabeledInput('Mock scenario (dev)', devScenarioSelect);
+  devScenarioLabel.append(devScenarioStatus);
+
+  const setScenarioOptions = (options: string[], selected?: string) => {
+    devScenarioSelect.innerHTML = '';
+    const noneOption = document.createElement('option');
+    noneOption.value = '';
+    noneOption.textContent = '(none)';
+    devScenarioSelect.append(noneOption);
+
+    for (const scenario of options) {
+      const option = document.createElement('option');
+      option.value = scenario;
+      option.textContent = scenario;
+      devScenarioSelect.append(option);
+    }
+
+    if (selected && !options.includes(selected)) {
+      const current = document.createElement('option');
+      current.value = selected;
+      current.textContent = `${selected} (current)`;
+      devScenarioSelect.append(current);
+    }
+    devScenarioSelect.value = selected ?? '';
+  };
+
+  const refreshDevScenarioOptions = async () => {
+    const latestOverrides = readRuntimeOverrides();
+    const baseUrl = latestOverrides.openRouterBaseUrl;
+    const currentScenario = readRuntimeScenario();
+    if (!isLocalDevBaseUrl(baseUrl)) {
+      devScenarioLabel.style.display = 'none';
+      return;
+    }
+
+    devScenarioLabel.style.display = 'flex';
+    devScenarioStatus.textContent = 'Loading scenarios...';
+    setScenarioOptions([], currentScenario);
+
+    if (!baseUrl) {
+      devScenarioStatus.textContent = 'Set base URL to local mock server to load scenarios.';
+      return;
+    }
+
+    try {
+      const response = await fetch(buildScenariosUrl(baseUrl));
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data = (await response.json()) as { scenarios?: unknown };
+      const scenarios = Array.isArray(data.scenarios)
+        ? data.scenarios.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : [];
+      setScenarioOptions(scenarios, currentScenario);
+      devScenarioStatus.textContent = currentScenario ? `Using scenario: ${currentScenario}` : 'Using scenario: none';
+    } catch (error) {
+      setScenarioOptions([], currentScenario);
+      devScenarioStatus.textContent = `Failed to load scenarios: ${(error as Error).message}`;
+    }
+  };
+
   function persistPatch(patch: Partial<AgentSettings>): void {
     settings = saveSettings(patch);
     bindWorker(settings);
+    void refreshDevScenarioOptions();
   }
 
   modelInput.addEventListener('input', () => persistPatch({ model: modelInput.value }));
   tempInput.addEventListener('input', () => persistPatch({ temperature: Number(tempInput.value) }));
   apiKeyInput.addEventListener('input', () => persistPatch({ apiKey: apiKeyInput.value.trim() }));
   mode.addEventListener('change', () => persistPatch({ reasoningMode: mode.value as AgentSettings['reasoningMode'] }));
+  devScenarioSelect.addEventListener('change', () => {
+    const nextScenario = devScenarioSelect.value || undefined;
+    writeRuntimeScenario(nextScenario);
+    bindWorker(settings);
+    const label = nextScenario || 'none';
+    devScenarioStatus.textContent = `Using scenario: ${label}`;
+    appendOutput(`\n[Dev] mock scenario set to ${label}\n`);
+  });
 
   bindWorker(settings);
+  void refreshDevScenarioOptions();
 
   send.onclick = () => {
     const text = composer.value.trim();
@@ -281,6 +379,7 @@ export function mountAgentUi(container: HTMLElement, hostContext?: AgentHostCont
     createLabeledInput('Reasoning mode', mode),
     createLabeledInput('Temperature', tempInput),
     createLabeledInput('API key', apiKeyInput),
+    devScenarioLabel,
   );
 
   container.innerHTML = '';

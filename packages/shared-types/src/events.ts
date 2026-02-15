@@ -4,14 +4,9 @@ export type RunnerEvent =
   | {
       type: 'apply.status.changed';
       payload: {
-        status: 'scheduled' | 'applied' | 'rejected' | 'missing_apply';
+        status: 'scheduled' | 'applied' | 'rejected';
         applyAt?: string;
-        reason?:
-          | string
-          | 'missing_apply_outcome'
-          | 'apply_not_attempted'
-          | 'apply failed'
-          | 'No code block found for auto-apply';
+        reason?: string | 'apply failed';
       };
     }
   | {
@@ -20,7 +15,15 @@ export type RunnerEvent =
     }
   | {
       type: 'tool.call.completed';
-      payload: { id: string; name: string; status: 'succeeded' | 'failed'; durationMs: number };
+      payload: {
+        id: string;
+        name: string;
+        status: 'succeeded' | 'failed';
+        durationMs: number;
+        request?: unknown;
+        response?: unknown;
+        errorMessage?: string;
+      };
     }
   | {
       type: 'assistant.stream.delta';

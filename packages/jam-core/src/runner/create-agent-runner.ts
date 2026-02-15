@@ -1,5 +1,6 @@
 import type { RunnerContextEnvelope, RunnerEvent } from '@chatrave/shared-types';
-import { openRouterComplete } from '../llm/openrouter/client';
+import type { CompletionClient } from '../llm/contracts';
+import { createOpenRouterCompletionClient } from '../llm/openrouter/adapter';
 import { buildSystemPrompt } from '../prompts/loader';
 import { dispatchToolCall } from '../tools/dispatcher';
 import { mapModeToEffort } from './model-profile';
@@ -53,31 +54,6 @@ function isSufficientPostToolResponse(text: string): boolean {
   return true;
 }
 
-function extractPrimaryCodeBlock(text: string): string | null {
-  const codeBlockRegex = /```(?:javascript|js|strudel)?\s*([\s\S]*?)```/gi;
-  const match = codeBlockRegex.exec(text);
-  if (!match) {
-    return null;
-  }
-  const code = match[1].trim();
-  return code || null;
-}
-
-function isJamIntent(text: string): boolean {
-  return /\b(beat|techno|house|drum|groove|bass|pattern|jam|music|kick|snare|hihat|hh|bd)\b/i.test(text);
-}
-
-function extractReadCodeResult(data: unknown): { code: string; hash?: string } {
-  if (!data || typeof data !== 'object') {
-    return { code: '' };
-  }
-  const maybe = data as { code?: unknown; hash?: unknown };
-  return {
-    code: typeof maybe.code === 'string' ? maybe.code : '',
-    hash: typeof maybe.hash === 'string' ? maybe.hash : undefined,
-  };
-}
-
 function extractApplyToolOutput(result: ToolResult): { status?: string; applyAt?: string; diagnostics?: string[] } {
   if (!result.output || typeof result.output !== 'object') {
     return {};
@@ -98,6 +74,12 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
   let running: { turnId: string; abortController: AbortController } | null = null;
   const completedContent = new Map<string, string>();
   let omitRuntimeContext = false;
+  const completionClient: CompletionClient =
+    config.completionClient ??
+    createOpenRouterCompletionClient({
+      baseUrl: config.openRouterBaseUrl,
+      extraHeaders: config.openRouterExtraHeaders,
+    });
 
   const emit = (event: RunnerEvent): void => {
     for (const listener of listeners) {
@@ -116,20 +98,15 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
     signal.addEventListener('abort', abortOnParent, { once: true });
 
     try {
-      return await openRouterComplete(
-        {
-          apiKey: config.settings.apiKey,
-          model: config.settings.model,
-          temperature: config.settings.temperature,
-          reasoningEnabled: config.settings.reasoningEnabled,
-          reasoningEffort: mapModeToEffort(config.settings.reasoningMode),
-        },
-        {
-          userText: messages[messages.length - 1]?.content ?? '',
-          messages,
-          signal: timeoutController.signal,
-        },
-      );
+      return await completionClient.complete({
+        apiKey: config.settings.apiKey,
+        model: config.settings.model,
+        temperature: config.settings.temperature,
+        reasoningEnabled: config.settings.reasoningEnabled,
+        reasoningEffort: mapModeToEffort(config.settings.reasoningMode),
+        messages,
+        signal: timeoutController.signal,
+      });
     } catch (error) {
       if (timeoutController.signal.aborted && !signal.aborted) {
         throw new Error(`Model timeout after ${timeoutMs}ms`);
@@ -177,17 +154,12 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
 
       const parsedInitial = parsePseudoFunctionCalls(initialResponse);
       let finalContent = parsedInitial.cleanedText;
-      let applyAttempted = false;
-      const jamRequest = isJamIntent(text);
-      let applyOutcome: 'scheduled' | 'applied' | 'rejected' | 'missing_apply' | null = null;
+      let applyOutcome: 'scheduled' | 'applied' | 'rejected' | null = null;
 
       if (parsedInitial.calls.length > 0) {
         const toolResults: unknown[] = [];
         for (const call of parsedInitial.calls) {
           emit({ type: 'tool.call.started', payload: { id: call.id, name: call.name } });
-          if (call.name === 'apply_strudel_change') {
-            applyAttempted = true;
-          }
           const result = await dispatchToolCall(call, {
             now,
             readCode: config.readCode,
@@ -196,7 +168,15 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
           });
           emit({
             type: 'tool.call.completed',
-            payload: { id: result.id, name: result.name, status: result.status, durationMs: result.durationMs },
+            payload: {
+              id: result.id,
+              name: result.name,
+              status: result.status,
+              durationMs: result.durationMs,
+              request: call.input,
+              response: result.output,
+              errorMessage: result.error?.message,
+            },
           });
 
           if (call.name === 'apply_strudel_change' && !applyOutcome) {
@@ -270,151 +250,11 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
 
         finalContent =
           (isSufficientPostToolResponse(followUpCleaned) ? followUpCleaned : '') ||
-          `I inspected the current code and ran required tools. I'm applying a stable default techno groove now.`;
-      } else if (isPlanningOnlyReply(parsedInitial.cleanedText) && config.readCode) {
-        const callId = `tool-${now()}-auto-read`;
-        emit({ type: 'tool.call.started', payload: { id: callId, name: 'read_code' } });
-        const autoReadResult = await dispatchToolCall(
-          {
-            id: callId,
-            name: 'read_code',
-            input: { path: 'active' },
-          },
-          {
-            now,
-            readCode: config.readCode,
-            applyStrudelChange: config.applyStrudelChange,
-            knowledgeSources: config.knowledgeSources,
-          },
-        );
-        emit({
-          type: 'tool.call.completed',
-          payload: {
-            id: autoReadResult.id,
-            name: autoReadResult.name,
-            status: autoReadResult.status,
-            durationMs: autoReadResult.durationMs,
-          },
-        });
-
-        let followUpCleaned = '';
-        try {
-          const followUpResponse = await callModel(abortController.signal, [
-            { role: 'system', content: prompt.prompt },
-            { role: 'user', content: contextualUserText },
-            { role: 'assistant', content: parsedInitial.cleanedText },
-            {
-              role: 'user',
-              content:
-                `Tool results:\n${formatToolResults([autoReadResult])}\n\n` +
-                'Complete the user request now with concrete Strudel guidance and code. Do not output tool tags.',
-            },
-          ]);
-          followUpCleaned = parsePseudoFunctionCalls(followUpResponse).cleanedText.trim();
-        } catch {
-          followUpCleaned = '';
-        }
-        finalContent =
-          (isSufficientPostToolResponse(followUpCleaned) ? followUpCleaned : '') ||
-          "I inspected the active code and I'm applying a stable default techno groove now.";
-      }
-
-      if (!applyAttempted && isJamIntent(text) && config.readCode && config.applyStrudelChange) {
-        let generatedCode = extractPrimaryCodeBlock(finalContent);
-        if (!generatedCode) {
-          try {
-            const forcedCodeResponse = await callModel(abortController.signal, [
-              { role: 'system', content: prompt.prompt },
-              { role: 'user', content: contextualUserText },
-              {
-                role: 'assistant',
-                content: finalContent,
-              },
-              {
-                role: 'user',
-                content:
-                  'Return only one executable Strudel code block now. Use ```javascript``` fences and no extra explanation.',
-              },
-            ]);
-            generatedCode = extractPrimaryCodeBlock(parsePseudoFunctionCalls(forcedCodeResponse).cleanedText);
-          } catch {
-            generatedCode = null;
-          }
-        }
-
-        const currentRead = await config.readCode({ path: 'active' });
-        if (generatedCode) {
-          const current = extractReadCodeResult(currentRead);
-          const applyCallId = `tool-${now()}-auto-apply`;
-          emit({ type: 'tool.call.started', payload: { id: applyCallId, name: 'apply_strudel_change' } });
-          const applyResult = await dispatchToolCall(
-            {
-              id: applyCallId,
-              name: 'apply_strudel_change',
-              input: {
-                currentCode: current.code,
-                baseHash: current.hash,
-                change: { kind: 'full_code', content: generatedCode },
-              },
-            },
-            {
-              now,
-              readCode: config.readCode,
-              applyStrudelChange: config.applyStrudelChange,
-              knowledgeSources: config.knowledgeSources,
-            },
-          );
-          emit({
-            type: 'tool.call.completed',
-            payload: {
-              id: applyResult.id,
-              name: applyResult.name,
-              status: applyResult.status,
-              durationMs: applyResult.durationMs,
-            },
-          });
-
-          const output = (applyResult.output ?? {}) as { status?: string; applyAt?: string; diagnostics?: string[] };
-          if (output.status === 'scheduled' || output.status === 'applied') {
-            emit({
-              type: 'apply.status.changed',
-              payload: { status: output.status as 'scheduled' | 'applied', applyAt: output.applyAt },
-            });
-            applyOutcome = output.status as 'scheduled' | 'applied';
-            finalContent += `\n\nApply status: ${output.status}${output.applyAt ? ` at ${output.applyAt}` : ''}.`;
-            applyAttempted = true;
-          } else {
-            emit({
-              type: 'apply.status.changed',
-              payload: { status: 'rejected', reason: output.diagnostics?.join('; ') || 'apply failed' },
-            });
-            applyOutcome = 'rejected';
-            finalContent += `\n\nApply status: rejected (${output.diagnostics?.join('; ') || 'apply failed'}).`;
-            applyAttempted = true;
-          }
-        } else {
-          emit({
-            type: 'apply.status.changed',
-            payload: { status: 'rejected', reason: 'No code block found for auto-apply' },
-          });
-          applyOutcome = 'rejected';
-          finalContent += '\n\nApply status: rejected (No code block found for auto-apply).';
-        }
-      }
-
-      if (jamRequest && !applyOutcome) {
-        const reason = applyAttempted ? 'missing_apply_outcome' : 'apply_not_attempted';
-        emit({
-          type: 'apply.status.changed',
-          payload: { status: 'missing_apply', reason },
-        });
-        finalContent = `${finalContent ? `${finalContent}\n\n` : ''}Apply status: missing_apply (${reason}).`;
+          'I inspected the current code and ran required tools.';
       }
 
       if (!finalContent.trim()) {
-        finalContent = jamRequest
-          ? 'Apply status: missing_apply (missing_apply_outcome).'
-          : 'No response content generated.';
+        finalContent = 'No response content generated.';
       }
 
       if (finalContent) {
