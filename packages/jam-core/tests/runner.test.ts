@@ -279,6 +279,47 @@ describe('agent runner', () => {
     expect(deltas.join('')).toContain('Apply status: missing_apply');
   });
 
+  it('maps failed direct apply tool call to rejected instead of missing_apply', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockCompletionResponse(
+          '<function_calls><invoke name="apply_strudel_change"><parameter name="currentCode">s("bd")</parameter></invoke></function_calls>',
+        ),
+      )
+      .mockResolvedValueOnce(mockCompletionResponse('Attempted apply and got validation feedback.'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const runner = createAgentRunner({
+      settings: {
+        schemaVersion: 1,
+        provider: 'openrouter',
+        model: 'moonshotai/kimi-k2.5',
+        reasoningEnabled: true,
+        reasoningMode: 'balanced',
+        temperature: 0.2,
+        apiKey: 'k',
+      },
+      now: () => 100,
+    });
+
+    const applyStatuses: Array<{ status: string; reason?: string }> = [];
+    const deltas: string[] = [];
+    runner.subscribeToEvents((event) => {
+      if (event.type === 'apply.status.changed') {
+        applyStatuses.push({ status: event.payload.status, reason: event.payload.reason });
+      }
+      if (event.type === 'assistant.stream.delta') {
+        deltas.push(event.payload.delta);
+      }
+    });
+
+    await runner.sendUserMessage('give me a techno beat');
+    expect(applyStatuses.some((entry) => entry.status === 'rejected')).toBe(true);
+    expect(applyStatuses.some((entry) => entry.status === 'missing_apply')).toBe(false);
+    expect(deltas.join('')).not.toContain('Apply status: missing_apply');
+  });
+
   it('clears stored conversation context on resetContext', async () => {
     const fetchMock = vi.fn().mockResolvedValue(mockCompletionResponse('ok'));
     vi.stubGlobal('fetch', fetchMock);

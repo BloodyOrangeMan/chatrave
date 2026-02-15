@@ -5,6 +5,7 @@ import { dispatchToolCall } from '../tools/dispatcher';
 import { mapModeToEffort } from './model-profile';
 import { parsePseudoFunctionCalls } from './tool-call-parser';
 import type { AgentRunner, AgentRunnerConfig } from './types';
+import type { ToolResult } from '../tools/contracts';
 
 function createIds(now: () => number): { turnId: string; messageId: string } {
   const id = `${now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -74,6 +75,20 @@ function extractReadCodeResult(data: unknown): { code: string; hash?: string } {
   return {
     code: typeof maybe.code === 'string' ? maybe.code : '',
     hash: typeof maybe.hash === 'string' ? maybe.hash : undefined,
+  };
+}
+
+function extractApplyToolOutput(result: ToolResult): { status?: string; applyAt?: string; diagnostics?: string[] } {
+  if (!result.output || typeof result.output !== 'object') {
+    return {};
+  }
+  const maybe = result.output as { status?: unknown; applyAt?: unknown; diagnostics?: unknown };
+  return {
+    status: typeof maybe.status === 'string' ? maybe.status : undefined,
+    applyAt: typeof maybe.applyAt === 'string' ? maybe.applyAt : undefined,
+    diagnostics: Array.isArray(maybe.diagnostics)
+      ? maybe.diagnostics.filter((item): item is string => typeof item === 'string')
+      : undefined,
   };
 }
 
@@ -183,6 +198,32 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
             type: 'tool.call.completed',
             payload: { id: result.id, name: result.name, status: result.status, durationMs: result.durationMs },
           });
+
+          if (call.name === 'apply_strudel_change' && !applyOutcome) {
+            if (result.status === 'failed') {
+              emit({
+                type: 'apply.status.changed',
+                payload: { status: 'rejected', reason: result.error?.message || 'apply failed' },
+              });
+              applyOutcome = 'rejected';
+            } else {
+              const output = extractApplyToolOutput(result);
+              if (output.status === 'scheduled' || output.status === 'applied') {
+                emit({
+                  type: 'apply.status.changed',
+                  payload: { status: output.status, applyAt: output.applyAt },
+                });
+                applyOutcome = output.status;
+              } else {
+                emit({
+                  type: 'apply.status.changed',
+                  payload: { status: 'rejected', reason: output.diagnostics?.join('; ') || 'apply failed' },
+                });
+                applyOutcome = 'rejected';
+              }
+            }
+          }
+
           toolResults.push(result);
         }
 
