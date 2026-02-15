@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "packageManager": "pnpm@10.4.1",
   "scripts": {
+    "dev": "bash tools/run-dev.sh",
     "typecheck": "pnpm -r --filter './packages/*' --filter './apps/*' run typecheck",
     "test": "pnpm -r --filter './packages/*' --filter './apps/*' run test",
     "check:strudel-boundary": "bash tools/check-strudel-boundary.sh",

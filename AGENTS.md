@@ -4,8 +4,8 @@
 Build an offline-first, in-browser Strudel REPL experience with a side-tab Jam Agent for real-time music jamming.
 
 Reference docs:
-- `UIUX.md`
-- `STRUDEL_KNOWLEDGE_TOOL_SPEC.md`
+- `docs/UIUX.md`
+- `docs/STRUDEL_KNOWLEDGE_TOOL_SPEC.md`
 - `docs/DEV_FAKE_BOUNDARY.md`
 - `docs/AGENT_INTEGRATION_GUIDE.md`
 

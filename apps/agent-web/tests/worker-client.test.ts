@@ -8,6 +8,7 @@ const { createJamAgent, dispatchToolCall, clearActiveCode } = vi.hoisted(() => (
 }));
 
 vi.mock('ai', () => ({
+  createUIMessageStream: vi.fn(() => ({ kind: 'mock-stream' })),
   DirectChatTransport: class DirectChatTransport {
     options: unknown;
     constructor(options: unknown) {
@@ -44,6 +45,7 @@ const settings = {
   schemaVersion: 2 as const,
   provider: 'openrouter' as const,
   model: 'x',
+  skillsEnabled: true,
   reasoningEnabled: true,
   reasoningMode: 'balanced' as const,
   temperature: 0.3,
@@ -67,6 +69,13 @@ describe('createChatRuntime', () => {
   it('uses real agent by default', () => {
     createChatRuntime(settings);
     expect(createJamAgent).toHaveBeenCalledTimes(1);
+    const firstCall = ((createJamAgent as unknown as { mock: { calls: unknown[][] } }).mock.calls[0] ??
+      null) as unknown[] | null;
+    expect(firstCall).toBeDefined();
+    const call = (firstCall?.[0] ?? {}) as { settings: { skillsEnabled?: boolean }; skillsCatalog?: unknown[] };
+    expect(call.settings.skillsEnabled).toBe(true);
+    expect(Array.isArray(call.skillsCatalog)).toBe(true);
+    expect(call.skillsCatalog?.length).toBeGreaterThan(0);
   });
 
   it('uses mock transport when toggle is enabled', () => {

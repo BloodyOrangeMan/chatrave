@@ -17,9 +17,10 @@ while IFS= read -r file; do
     continue
   else
     echo "Boundary violation: disallowed tracked change under strudel/: ${file}"
-    echo "Allowed in Phase 1:"
+    echo "Allowed overlay targets:"
     echo "  - strudel/website/src/repl/components/panel/Panel.jsx"
     echo "  - strudel/pnpm-lock.yaml"
+    echo "Use patch overlay files in patches/strudel/*.patch and tools/apply-strudel-patches.sh"
     exit 1
   fi
 done <<< "${changed_files}"

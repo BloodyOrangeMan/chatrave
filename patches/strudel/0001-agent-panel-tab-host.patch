@@ -1,0 +1,174 @@
+diff --git a/website/src/repl/components/panel/Panel.jsx b/website/src/repl/components/panel/Panel.jsx
+index 25ed3e72..d50f6430 100644
+--- a/website/src/repl/components/panel/Panel.jsx
++++ b/website/src/repl/components/panel/Panel.jsx
+@@ -1,5 +1,5 @@
+ import { Bars3Icon, PlayIcon, StopIcon, XMarkIcon } from '@heroicons/react/16/solid';
+-import { useEffect, useRef } from 'react';
++import { useEffect, useRef, useState } from 'react';
+ import cx from '@src/cx.mjs';
+ import { StrudelIcon } from '@src/repl/components/icons/StrudelIcon';
+ import { useSettings, setIsZen, setIsPanelOpened, setActiveFooter as setTab } from '../../../settings.mjs';
+@@ -12,7 +12,6 @@ import { PatternsTab } from './PatternsTab';
+ import { Reference } from './Reference';
+ import { SettingsTab } from './SettingsTab';
+ import { SoundsTab } from './SoundsTab';
+-import { WelcomeTab } from './WelcomeTab';
+ 
+ const TAURI = typeof window !== 'undefined' && window.__TAURI__;
+ 
+@@ -205,19 +204,22 @@ export function RightPanel({ context }) {
+ }
+ 
+ const tabNames = {
+-  welcome: 'intro',
++  agent: 'agent',
+   patterns: 'patterns',
+   sounds: 'sounds',
+   reference: 'reference',
+   export: 'export',
+   console: 'console',
+   settings: 'settings',
+-  agent: 'agent',
+ };
+ if (TAURI) {
+   tabNames.files = 'files';
+ }
+ 
++function normalizeTab(tab) {
++  return tab === 'intro' ? tabNames.agent : tab;
++}
++
+ function PanelNav({ children, className, ...props }) {
+   const settings = useSettings();
+   return (
+@@ -238,7 +240,7 @@ function PanelNav({ children, className, ...props }) {
+ 
+ function PanelContent({ context, tab }) {
+   useLogger();
+-  switch (tab) {
++  switch (normalizeTab(tab)) {
+     case tabNames.patterns:
+       return <PatternsTab context={context} />;
+     case tabNames.console:
+@@ -256,27 +258,93 @@ function PanelContent({ context, tab }) {
+     case tabNames.files:
+       return <FilesTab />;
+     default:
+-      return <WelcomeTab context={context} />;
++      return <AgentTabHost context={context} />;
+   }
+ }
+ 
+ function AgentTabHost({ context }) {
+   const hostRef = useRef(null);
++  const contextProxyRef = useRef({});
++  const [status, setStatus] = useState('booting');
++  const [bootError, setBootError] = useState('');
++
++  Object.assign(contextProxyRef.current, context);
+ 
+   useEffect(() => {
++    let canceled = false;
+     const host = hostRef.current;
+-    const renderer = window.__CHATRAVE_AGENT_TAB_RENDERER__;
+-    if (!host || !renderer) {
+-      return;
++    if (!host) {
++      return () => {};
+     }
+ 
+-    renderer.render(host, context);
++    const renderIntoHost = () => {
++      const renderer = window.__CHATRAVE_AGENT_TAB_RENDERER__;
++      if (!renderer) {
++        return false;
++      }
++      renderer.render(host, contextProxyRef.current);
++      setStatus('ready');
++      return true;
++    };
++
++    const bootstrap = async () => {
++      if (renderIntoHost()) {
++        return;
++      }
++
++      const preferred = window.localStorage.getItem('chatraveAgentModuleUrl');
++      const fallbackModuleUrls = [
++        'http://localhost:4174/src/index.ts',
++        'http://localhost:4175/src/index.ts',
++      ];
++      const moduleUrls = preferred
++        ? [preferred, ...fallbackModuleUrls.filter((url) => url !== preferred)]
++        : fallbackModuleUrls;
++
++      for (const moduleUrl of moduleUrls) {
++        try {
++          // eslint-disable-next-line no-eval
++          await import(/* @vite-ignore */ moduleUrl);
++          window.__CHATRAVE_INIT_AGENT_TAB__?.();
++          if (!canceled && renderIntoHost()) {
++            window.localStorage.setItem('chatraveAgentModuleUrl', moduleUrl);
++            return;
++          }
++        } catch (error) {
++          if (moduleUrl === moduleUrls[moduleUrls.length - 1] && !canceled) {
++            setStatus('error');
++            setBootError(
++              `Failed to load agent module from tried URLs (${moduleUrls.join(', ')}). Last error: ${String(error)}`,
++            );
++          }
++        }
++      }
++    };
++
++    bootstrap();
++
+     return () => {
+-      renderer.unmount?.(host);
++      canceled = true;
++      const renderer = window.__CHATRAVE_AGENT_TAB_RENDERER__;
++      renderer?.unmount?.(host);
+     };
+-  }, [context]);
++  }, []);
+ 
+-  return <div id="agent-tab" ref={hostRef} className="w-full h-full" />;
++  return (
++    <div className="w-full h-full relative">
++      <div id="agent-tab" ref={hostRef} className="w-full h-full" />
++      {status !== 'ready' && (
++        <div className="absolute inset-0 text-xs text-foreground opacity-80 pointer-events-none p-2">
++          <div>Booting agent tab...</div>
++          {status === 'error' && <div className="mt-2 text-red-500">{bootError}</div>}
++          <div className="mt-2">
++            Tip: run <code>pnpm --filter @chatrave/agent-web dev</code> and set{' '}
++            <code>localStorage.chatraveAgentModuleUrl</code> if needed.
++          </div>
++        </div>
++      )}
++    </div>
++  );
+ }
+ 
+ function PanelTab({ label, isSelected, onClick }) {
+@@ -296,6 +364,7 @@ function PanelTab({ label, isSelected, onClick }) {
+ }
+ function Tabs({ className }) {
+   const { isPanelOpen, activeFooter: tab } = useSettings();
++  const normalizedTab = normalizeTab(tab);
+   return (
+     <div
+       className={cx(
+@@ -305,7 +374,9 @@ function Tabs({ className }) {
+     >
+       {Object.keys(tabNames).map((key) => {
+         const val = tabNames[key];
+-        return <PanelTab key={key} isSelected={tab === val && isPanelOpen} label={key} onClick={() => setTab(val)} />;
++        return (
++          <PanelTab key={key} isSelected={normalizedTab === val && isPanelOpen} label={key} onClick={() => setTab(val)} />
++        );
+       })}
+     </div>
+   );

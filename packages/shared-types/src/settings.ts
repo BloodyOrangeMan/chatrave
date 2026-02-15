@@ -9,6 +9,7 @@ export interface AgentSettings {
   schemaVersion: 2;
   provider: Provider;
   model: string;
+  skillsEnabled: boolean;
   reasoningEnabled: boolean;
   reasoningMode: ReasoningMode;
   temperature: number;
@@ -26,6 +27,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   schemaVersion: 2,
   provider: 'openrouter',
   model: 'moonshotai/kimi-k2.5',
+  skillsEnabled: true,
   reasoningEnabled: true,
   reasoningMode: 'balanced',
   temperature: 0.3,

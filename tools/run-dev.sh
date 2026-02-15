@@ -6,6 +6,10 @@ AGENT_LOG="${ROOT_DIR}/.agent-web.dev.log"
 STRUDEL_LOG="${ROOT_DIR}/.strudel.dev.log"
 ALIAS_LOG="${ROOT_DIR}/.agent-alias.dev.log"
 
+if [[ -x "${ROOT_DIR}/tools/apply-strudel-patches.sh" ]]; then
+  "${ROOT_DIR}/tools/apply-strudel-patches.sh"
+fi
+
 cleanup() {
   if [[ -n "${ALIAS_PID:-}" ]] && kill -0 "${ALIAS_PID}" 2>/dev/null; then
     kill "${ALIAS_PID}" 2>/dev/null || true
@@ -86,7 +90,7 @@ fi
 
 # Strudel Astro typically runs on 4321; keep a sane default and print hint.
 STRUDEL_URL="http://localhost:4321/"
-MOCK_SCENARIO="${CHATRAVE_MOCK_SCENARIO:-successful_jam_apply}"
+MOCK_SCENARIO="${CHATRAVE_MOCK_SCENARIO:-read_then_apply_success}"
 
 echo
 printf '%s\n' "Dev servers are up:"

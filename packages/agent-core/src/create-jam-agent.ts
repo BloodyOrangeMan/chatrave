@@ -2,7 +2,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { ToolLoopAgent, stepCountIs, tool } from 'ai';
 import { dispatchToolCall, type KnowledgeSources, type ToolCall } from '@chatrave/agent-tools';
 import { z } from 'zod';
-import { SYSTEM_PROMPT } from './system-prompt';
+import { buildSystemPrompt } from './system-prompt';
 import { getMockScenario } from './mock-scenarios';
 import type { CreateJamAgentConfig } from './types';
 
@@ -46,6 +46,20 @@ function createKnowledgeInputSchema() {
   });
 }
 
+function createSkillInputSchema() {
+  return z.discriminatedUnion('action', [
+    z.object({
+      action: z.literal('list'),
+      query: z.string().optional(),
+      limit: z.number().int().positive().max(50).optional(),
+    }),
+    z.object({
+      action: z.literal('get'),
+      id: z.string().min(1, 'id is required'),
+    }),
+  ]);
+}
+
 function createToolCallId(name: ToolCall['name']): string {
   return `${name}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
@@ -70,6 +84,8 @@ function sanitizeForDebug(input: unknown): unknown {
 export function createJamAgent(config: CreateJamAgentConfig) {
   const provider = createOpenRouter({ apiKey: config.settings.apiKey });
   let cachedKnowledge: KnowledgeSources | undefined;
+  const skillCatalog = config.settings.skillsEnabled && Array.isArray(config.skillsCatalog) ? config.skillsCatalog : [];
+  const systemPrompt = buildSystemPrompt(skillCatalog.map((skill) => skill.name));
 
   const runTool = async (name: ToolCall['name'], input: unknown): Promise<unknown> => {
     if (name === 'strudel_knowledge' && !cachedKnowledge && config.getKnowledgeSources) {
@@ -86,6 +102,26 @@ export function createJamAgent(config: CreateJamAgentConfig) {
         readCode: config.readCode,
         applyStrudelChange: config.applyStrudelChange as never,
         knowledgeSources: cachedKnowledge,
+        skills: {
+          list: () =>
+            skillCatalog.map((skill) => ({
+              id: skill.id,
+              name: skill.name,
+              description: skill.description,
+              tags: Array.isArray(skill.tags) ? skill.tags : [],
+            })),
+          get: (id: string) => {
+            const match = skillCatalog.find((skill) => skill.id === id.trim());
+            if (!match) return null;
+            return {
+              id: match.id,
+              name: match.name,
+              description: match.description,
+              tags: Array.isArray(match.tags) ? match.tags : [],
+              content: match.content,
+            };
+          },
+        },
       },
     );
 
@@ -98,7 +134,7 @@ export function createJamAgent(config: CreateJamAgentConfig) {
 
   return new ToolLoopAgent({
     model: provider(config.settings.model),
-    instructions: SYSTEM_PROMPT,
+    instructions: systemPrompt,
     temperature: config.settings.temperature,
     stopWhen: stepCountIs(config.maxSteps ?? 24),
     providerOptions: config.settings.reasoningEnabled
@@ -120,18 +156,25 @@ export function createJamAgent(config: CreateJamAgentConfig) {
         inputSchema: createKnowledgeInputSchema(),
         execute: async (input) => runTool('strudel_knowledge', input),
       }),
+      skill: tool({
+        description: 'Load local genre/style skills (SKILL.md): list available skills or fetch one by id.',
+        inputSchema: createSkillInputSchema(),
+        execute: async (input) => runTool('skill', input),
+      }),
     },
     prepareCall: async (options) => {
+      const messagesPayload = (options as { messages?: unknown }).messages ?? (options as { prompt?: unknown }).prompt ?? null;
       const debugPayload = {
         model: config.settings.model,
-        system: SYSTEM_PROMPT,
+        system: systemPrompt,
         providerOptions: options.providerOptions,
         tools: [
           { name: 'read_code', description: 'Read active code/context before editing.' },
           { name: 'apply_strudel_change', description: 'Apply validated Strudel change with dry-run and quantized swap.' },
           { name: 'strudel_knowledge', description: 'Lookup Strudel reference/sounds with fuzzy ranking.' },
+          { name: 'skill', description: 'List/get local style skill docs.' },
         ],
-        messages: (options as { messages?: unknown }).messages ?? (options as { prompt?: unknown }).prompt ?? null,
+        messages: messagesPayload,
       };
       const sanitized = sanitizeForDebug(debugPayload) as {
         system?: unknown;
@@ -143,7 +186,10 @@ export function createJamAgent(config: CreateJamAgentConfig) {
       console.log('[chatrave][ai-request] providerOptions', sanitized.providerOptions);
       console.log('[chatrave][ai-request] tools', sanitized.tools);
       console.log('[chatrave][ai-request] messages', sanitized.messages);
-      return options;
+      return {
+        ...options,
+        instructions: systemPrompt,
+      };
     },
   });
 }

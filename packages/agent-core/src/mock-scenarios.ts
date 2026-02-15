@@ -70,6 +70,37 @@ const SCENARIOS: Record<string, MockScenario> = {
       { response: 'Applied repaired groove with known sounds and preserved tempo continuity.' },
     ],
   },
+  skill_jazz_then_apply: {
+    name: 'skill_jazz_then_apply',
+    steps: [
+      {
+        thinking: 'Discovering local style skills and loading jazz guidance before composing changes.',
+        toolCalls: [{ name: 'skill', input: { action: 'list', query: 'jazz', limit: 5 } }],
+      },
+      {
+        toolCalls: [{ name: 'skill', input: { action: 'get', id: 'jazz' } }],
+      },
+      {
+        toolCalls: [{ name: 'read_code', input: { path: 'active' } }],
+      },
+      {
+        toolCalls: [
+          {
+            name: 'apply_strudel_change',
+            input: {
+              baseHash: 'fnv1a-811c9dc5',
+              change: {
+                kind: 'full_code',
+                content:
+                  'setcpm(120/4)\\nconst drums = s(\"bd*4 hh*8 cp*2\").gain(0.8)\\nconst comp = chord(\"Cm7 F7 BbM7 G7\").voicing().s(\"piano\").gain(0.45)\\nstack(drums, comp)',
+              },
+            },
+          },
+        ],
+      },
+      { response: 'Loaded the jazz skill, then applied a conservative jazz-flavored groove update.' },
+    ],
+  },
   long_stream_visible_text: {
     name: 'long_stream_visible_text',
     steps: [

@@ -50,6 +50,7 @@ export function validateSettings(input: Partial<AgentSettings> | undefined): Age
     schemaVersion: 2,
     provider: input.provider === 'openrouter' ? 'openrouter' : base.provider,
     model: typeof input.model === 'string' && input.model.trim() ? input.model : base.model,
+    skillsEnabled: typeof input.skillsEnabled === 'boolean' ? input.skillsEnabled : base.skillsEnabled,
     reasoningEnabled: typeof input.reasoningEnabled === 'boolean' ? input.reasoningEnabled : base.reasoningEnabled,
     reasoningMode: isReasoningMode(input.reasoningMode) ? input.reasoningMode : base.reasoningMode,
     temperature: clampTemperature(typeof input.temperature === 'number' ? input.temperature : base.temperature),

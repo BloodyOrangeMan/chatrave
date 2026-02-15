@@ -7,5 +7,6 @@ describe('shared-types defaults', () => {
     expect(DEFAULT_AGENT_SETTINGS.reasoningEnabled).toBe(true);
     expect(DEFAULT_AGENT_SETTINGS.schemaVersion).toBe(2);
     expect(DEFAULT_AGENT_SETTINGS.voice.provider).toBe('web_speech');
+    expect(DEFAULT_AGENT_SETTINGS.skillsEnabled).toBe(true);
   });
 });

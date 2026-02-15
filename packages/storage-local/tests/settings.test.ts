@@ -17,6 +17,7 @@ describe('settings validation', () => {
   it('fills voice defaults for legacy settings payloads', () => {
     const settings = validateSettings({ apiKey: 'abc' } as never);
     expect(settings.schemaVersion).toBe(2);
+    expect(settings.skillsEnabled).toBe(true);
     expect(settings.voice.provider).toBe('web_speech');
   });
 
@@ -29,6 +30,11 @@ describe('settings validation', () => {
     });
     expect(settings.voice.provider).toBe('web_speech');
     expect(settings.voice.openaiBaseUrl).toBe('https://api.openai.com/v1');
+  });
+
+  it('falls back invalid skillsEnabled to default', () => {
+    const settings = validateSettings({ skillsEnabled: 'yes' as never });
+    expect(settings.skillsEnabled).toBe(true);
   });
 });
 

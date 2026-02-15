@@ -1,4 +1,4 @@
-export type ToolName = 'read_code' | 'apply_strudel_change' | 'strudel_knowledge';
+export type ToolName = 'read_code' | 'apply_strudel_change' | 'strudel_knowledge' | 'skill';
 
 export interface ToolCall<TInput = unknown> {
   id: string;
@@ -51,4 +51,11 @@ export interface StrudelKnowledgeInput {
         mode?: 'auto' | 'search' | 'detail' | 'list';
         limit?: number;
       };
+}
+
+export interface SkillToolInput {
+  action: 'list' | 'get';
+  id?: string;
+  query?: string;
+  limit?: number;
 }

@@ -205,6 +205,32 @@ function MessageBubble({
   );
 }
 
+function ToggleRow({
+  label,
+  description,
+  enabled,
+  onToggle,
+  disabled = false,
+}: {
+  label: string;
+  description: string;
+  enabled: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className={`toggle-row ${disabled ? 'disabled' : ''}`}>
+      <div className="toggle-meta">
+        <div className="toggle-label">{label}</div>
+        <div className="toggle-description">{description}</div>
+      </div>
+      <button type="button" className={`toggle-pill ${enabled ? 'on' : 'off'}`} onClick={onToggle} disabled={disabled}>
+        {enabled ? 'ON' : 'OFF'}
+      </button>
+    </div>
+  );
+}
+
 function ChatRuntimePane({
   runtime,
   expandToolsByDefault,
@@ -225,22 +251,23 @@ function ChatRuntimePane({
     messages: loadChatSession() as UIMessage[],
     transport: runtime.transport,
     onFinish: ({ message }) => {
+      let cooked: string | undefined;
       if (turnStartRef.current && turnStartRef.current > 0) {
         const duration = Date.now() - turnStartRef.current;
-        // Only record if duration is reasonable (less than 10 minutes)
         if (duration > 0 && duration < 600000) {
-          const cooked = cookLabel(duration);
-          setMessages((prevMessages) =>
-            prevMessages.map((item) => {
-              if (item.id !== message.id) return item;
-              const nextMetadata =
-                item.metadata && typeof item.metadata === 'object'
-                  ? { ...(item.metadata as Record<string, unknown>), cookedLabel: cooked }
-                  : { cookedLabel: cooked };
-              return { ...item, metadata: nextMetadata };
-            }),
-          );
+          cooked = cookLabel(duration);
         }
+      }
+      if (cooked) {
+        setMessages((prevMessages) =>
+          prevMessages.map((item) => {
+            if (item.id !== message.id) return item;
+            const baseMetadata =
+              item.metadata && typeof item.metadata === 'object' ? { ...(item.metadata as Record<string, unknown>) } : {};
+            if (cooked) baseMetadata.cookedLabel = cooked;
+            return { ...item, metadata: baseMetadata };
+          }),
+        );
       }
       turnStartRef.current = null;
     },
@@ -474,6 +501,14 @@ export function AgentApp({ hostContext }: { hostContext?: AgentHostContext }) {
           </button>
         </div>
       </div>
+      <div className="mode-strip">
+        <div className={`mode-pill ${mockEnabled ? 'on' : 'off'}`}>
+          Mode: {mockEnabled ? 'Mock LLM' : 'Real OpenRouter'}
+        </div>
+        <div className={`mode-pill ${settings.skillsEnabled ? 'on' : 'off'}`}>
+          Skills: {settings.skillsEnabled ? 'Enabled' : 'Disabled'}
+        </div>
+      </div>
 
       {showSettings ? (
         <div className="popover">
@@ -481,6 +516,12 @@ export function AgentApp({ hostContext }: { hostContext?: AgentHostContext }) {
             Model
             <input value={settings.model} onChange={(event) => patchSettings({ model: event.target.value })} />
           </label>
+          <ToggleRow
+            label="Genre Skills"
+            description="Allow the model to discover and load SKILL.md guidance."
+            enabled={settings.skillsEnabled}
+            onToggle={() => patchSettings({ skillsEnabled: !settings.skillsEnabled })}
+          />
           <label>
             Reasoning mode
             <select
@@ -558,25 +599,23 @@ export function AgentApp({ hostContext }: { hostContext?: AgentHostContext }) {
 
       {showDev ? (
         <div className="popover">
-          <label className="inline">
-            <input
-              type="checkbox"
-              checked={mockEnabled}
-              onChange={(event) => {
-                const enabled = event.target.checked;
-                setMockEnabled(enabled);
-                writeDevFakeUiEnabled(enabled);
-                if (enabled) {
-                  enableMockRuntimeDefaults();
-                  setScenario(readRuntimeScenario() ?? getRuntimeScenarios()[0]);
-                } else {
-                  clearMockRuntimeOverrides();
-                }
-                bumpRuntime();
-              }}
-            />
-            Enable mock LLM
-          </label>
+          <ToggleRow
+            label="Mock LLM"
+            description="Use local deterministic scenarios instead of OpenRouter."
+            enabled={mockEnabled}
+            onToggle={() => {
+              const enabled = !mockEnabled;
+              setMockEnabled(enabled);
+              writeDevFakeUiEnabled(enabled);
+              if (enabled) {
+                enableMockRuntimeDefaults();
+                setScenario(readRuntimeScenario() ?? getRuntimeScenarios()[0]);
+              } else {
+                clearMockRuntimeOverrides();
+              }
+              bumpRuntime();
+            }}
+          />
           <label>
             Scenario
             <select

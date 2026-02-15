@@ -4,6 +4,7 @@ import type { AgentSettings } from '@chatrave/shared-types';
 import { dispatchToolCall, type StrudelKnowledgeInput, type ToolCall } from '@chatrave/agent-tools';
 import { createStrudelBridge, type AgentHostContext } from '@chatrave/strudel-bridge';
 import { isDevFakeUiEnabled, readRuntimeScenario } from './runtime-overrides';
+import { SKILLS } from './skills/catalog';
 
 export type { AgentHostContext } from '@chatrave/strudel-bridge';
 
@@ -33,9 +34,9 @@ function createMockTransport(context: {
   return {
     async sendMessages({ messages, abortSignal }) {
       const scenario = getMockScenario(context.scenarioName);
-      console.log('[chatrave][ai-request] systemPrompt', 'mock-scenario');
+      console.log('[chatrave][ai-request] systemPrompt', 'mock scenario mode');
       console.log('[chatrave][ai-request] providerOptions', { mode: 'mock', scenario: scenario.name });
-      console.log('[chatrave][ai-request] tools', ['read_code', 'apply_strudel_change', 'strudel_knowledge']);
+      console.log('[chatrave][ai-request] tools', ['read_code', 'apply_strudel_change', 'strudel_knowledge', 'skill']);
       console.log('[chatrave][ai-request] messages', messages);
       const stream = createUIMessageStream<UIMessage>({
         originalMessages: messages,
@@ -120,6 +121,27 @@ export function createChatRuntime(settings: AgentSettings, hostContext?: AgentHo
         readCode: bridge.readCode,
         applyStrudelChange: bridge.applyStrudelChange,
         knowledgeSources,
+        skills: {
+          list: () =>
+            SKILLS.map((skill) => ({
+              id: skill.id,
+              name: skill.name,
+              description: skill.description,
+              tags: skill.tags,
+            })),
+          get: (id) => {
+            const match = SKILLS.find((skill) => skill.id === id.trim());
+            return match
+              ? {
+                  id: match.id,
+                  name: match.name,
+                  description: match.description,
+                  tags: match.tags,
+                  content: match.content,
+                }
+              : null;
+          },
+        },
       },
     );
 
@@ -137,6 +159,7 @@ export function createChatRuntime(settings: AgentSettings, hostContext?: AgentHo
     : (new DirectChatTransport({
         agent: createJamAgent({
           settings,
+          skillsCatalog: SKILLS,
           maxSteps: 24,
           globalToolBudget: 40,
           maxRepairAttempts: 4,
