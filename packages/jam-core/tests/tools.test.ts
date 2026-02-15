@@ -139,7 +139,7 @@ describe('tool dispatcher', () => {
     expect(output.items[0].name).toBe('room');
   });
 
-  it('returns not_found for unknown queries', async () => {
+  it('returns fuzzy match for previously unknown query', async () => {
     const result = await dispatchToolCall(
       {
         id: '3',
@@ -154,9 +154,80 @@ describe('tool dispatcher', () => {
       },
     );
 
-    const output = result.output as { ok: boolean; reason?: string };
+    const output = result.output as { ok: boolean; items?: Array<{ name: string }> };
+    expect(output.ok).toBe(true);
+    expect(output.items?.[0]?.name).toBe('room');
+  });
+
+  it('matches typo query to closest reference function', async () => {
+    const result = await dispatchToolCall(
+      {
+        id: '3b',
+        name: 'strudel_knowledge',
+        input: { query: 'setcmp' },
+      },
+      {
+        knowledgeSources: {
+          reference: [
+            { name: 'setcpm', description: 'tempo', examples: ['setcpm(120/4)'] },
+            { name: 'set', description: 'set helper', examples: [] },
+          ],
+          sounds: [{ key: 'bd', data: { type: 'sample' } }],
+        },
+      },
+    );
+
+    const output = result.output as { ok: boolean; items?: Array<{ name: string }> };
+    expect(output.ok).toBe(true);
+    expect(output.items?.[0]?.name).toBe('setcpm');
+  });
+
+  it('respects top-k limit for ranked knowledge results', async () => {
+    const result = await dispatchToolCall(
+      {
+        id: '3c',
+        name: 'strudel_knowledge',
+        input: { query: { q: 'room', limit: 2 } },
+      },
+      {
+        knowledgeSources: {
+          reference: [
+            { name: 'room', description: 'room', examples: [] },
+            { name: 'roomsize', description: 'room size', examples: [] },
+            { name: 'roomfade', description: 'room fade', examples: [] },
+          ],
+          sounds: [{ key: 'bd', data: { type: 'sample' } }],
+        },
+      },
+    );
+
+    const output = result.output as { ok: boolean; items?: Array<{ name: string }> };
+    expect(output.ok).toBe(true);
+    expect(output.items?.length).toBe(2);
+  });
+
+  it('returns relevance-ranked suggestions when there is no viable match', async () => {
+    const result = await dispatchToolCall(
+      {
+        id: '3d',
+        name: 'strudel_knowledge',
+        input: { query: { q: 'rooom', domain: 'sounds' } },
+      },
+      {
+        knowledgeSources: {
+          reference: [
+            { name: 'room', description: 'room', examples: [] },
+            { name: 'reverb', description: 'reverb', examples: [] },
+          ],
+          sounds: [{ key: 'bd', data: { type: 'sample' } }],
+        },
+      },
+    );
+
+    const output = result.output as { ok: boolean; suggestions?: string[]; reason?: string };
     expect(output.ok).toBe(false);
     expect(output.reason).toBe('not_found');
+    expect(output.suggestions?.[0]).toBe('room');
   });
 
   it('returns structured unavailable result when knowledge sources are missing', async () => {
