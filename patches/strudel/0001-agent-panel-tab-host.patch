@@ -1,5 +1,5 @@
 diff --git a/website/src/repl/components/panel/Panel.jsx b/website/src/repl/components/panel/Panel.jsx
-index 3b4dd548..013cdf8c 100644
+index 3b4dd548..f26c9ceb 100644
 --- a/website/src/repl/components/panel/Panel.jsx
 +++ b/website/src/repl/components/panel/Panel.jsx
 @@ -1,4 +1,5 @@
@@ -45,7 +45,7 @@ index 3b4dd548..013cdf8c 100644
      case tabNames.patterns:
        return <PatternsTab context={context} />;
      case tabNames.console:
-@@ -249,13 +253,101 @@ function PanelContent({ context, tab }) {
+@@ -249,13 +253,120 @@ function PanelContent({ context, tab }) {
        return <ExportTab handleExport={context.handleExport} />;
      case tabNames.settings:
        return <SettingsTab started={context.started} />;
@@ -89,14 +89,33 @@ index 3b4dd548..013cdf8c 100644
 +        return;
 +      }
 +
++      const isLocalOrigin = /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname);
 +      const preferred = window.localStorage.getItem('chatraveAgentModuleUrl');
-+      const fallbackModuleUrls = [
-+        `${window.location.origin}/chatrave-agent/agent-tab.js`,
-+        'http://localhost:4174/src/index.ts',
-+        'http://localhost:4175/src/index.ts',
-+      ];
++      const preferredUrl = preferred ? (() => {
++        try {
++          return new URL(preferred, window.location.origin);
++        } catch {
++          return null;
++        }
++      })() : null;
++      const isPreferredLocalhost = preferredUrl
++        ? /^(localhost|127\.0\.0\.1)$/i.test(preferredUrl.hostname)
++        : false;
++      const safePreferred = !preferred
++        ? null
++        : !isLocalOrigin && isPreferredLocalhost
++          ? null
++          : preferred;
++
++      const fallbackModuleUrls = isLocalOrigin
++        ? [
++            `${window.location.origin}/chatrave-agent/agent-tab.js`,
++            'http://localhost:4174/src/index.ts',
++            'http://localhost:4175/src/index.ts',
++          ]
++        : [`${window.location.origin}/chatrave-agent/agent-tab.js`];
 +      const moduleUrls = preferred
-+        ? [preferred, ...fallbackModuleUrls.filter((url) => url !== preferred)]
++        ? [safePreferred, ...fallbackModuleUrls.filter((url) => url !== safePreferred)].filter(Boolean)
 +        : fallbackModuleUrls;
 +
 +      for (const moduleUrl of moduleUrls) {
@@ -148,7 +167,7 @@ index 3b4dd548..013cdf8c 100644
  function PanelTab({ label, isSelected, onClick }) {
    return (
      <>
-@@ -273,6 +365,7 @@ function PanelTab({ label, isSelected, onClick }) {
+@@ -273,6 +384,7 @@ function PanelTab({ label, isSelected, onClick }) {
  }
  function Tabs({ className }) {
    const { isPanelOpen, activeFooter: tab } = useSettings();
@@ -156,7 +175,7 @@ index 3b4dd548..013cdf8c 100644
    return (
      <div
        className={cx(
-@@ -282,7 +375,9 @@ function Tabs({ className }) {
+@@ -282,7 +394,9 @@ function Tabs({ className }) {
      >
        {Object.keys(tabNames).map((key) => {
          const val = tabNames[key];
