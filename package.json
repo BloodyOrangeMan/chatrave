@@ -5,6 +5,10 @@
   "packageManager": "pnpm@10.4.1",
   "scripts": {
     "dev": "bash tools/run-dev.sh",
+    "build:agent-web": "pnpm --filter @chatrave/agent-web build",
+    "stage:agent-web": "node tools/stage-agent-web.mjs",
+    "build:strudel": "bash tools/build-strudel-site.sh",
+    "build:all": "pnpm run build:strudel",
     "typecheck": "pnpm -r --filter './packages/*' --filter './apps/*' run typecheck",
     "test": "pnpm -r --filter './packages/*' --filter './apps/*' run test",
     "check:strudel-boundary": "bash tools/check-strudel-boundary.sh",

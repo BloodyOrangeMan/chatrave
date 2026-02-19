@@ -1,5 +1,5 @@
 diff --git a/website/src/repl/components/panel/Panel.jsx b/website/src/repl/components/panel/Panel.jsx
-index 25ed3e72..d50f6430 100644
+index 25ed3e72..013cdf8c 100644
 --- a/website/src/repl/components/panel/Panel.jsx
 +++ b/website/src/repl/components/panel/Panel.jsx
 @@ -1,5 +1,5 @@
@@ -51,7 +51,7 @@ index 25ed3e72..d50f6430 100644
      case tabNames.patterns:
        return <PatternsTab context={context} />;
      case tabNames.console:
-@@ -256,27 +258,93 @@ function PanelContent({ context, tab }) {
+@@ -256,27 +258,94 @@ function PanelContent({ context, tab }) {
      case tabNames.files:
        return <FilesTab />;
      default:
@@ -96,6 +96,7 @@ index 25ed3e72..d50f6430 100644
 +
 +      const preferred = window.localStorage.getItem('chatraveAgentModuleUrl');
 +      const fallbackModuleUrls = [
++        `${window.location.origin}/chatrave-agent/agent-tab.js`,
 +        'http://localhost:4174/src/index.ts',
 +        'http://localhost:4175/src/index.ts',
 +      ];
@@ -153,7 +154,7 @@ index 25ed3e72..d50f6430 100644
  }
  
  function PanelTab({ label, isSelected, onClick }) {
-@@ -296,6 +364,7 @@ function PanelTab({ label, isSelected, onClick }) {
+@@ -296,6 +365,7 @@ function PanelTab({ label, isSelected, onClick }) {
  }
  function Tabs({ className }) {
    const { isPanelOpen, activeFooter: tab } = useSettings();
@@ -161,7 +162,7 @@ index 25ed3e72..d50f6430 100644
    return (
      <div
        className={cx(
-@@ -305,7 +374,9 @@ function Tabs({ className }) {
+@@ -305,7 +375,9 @@ function Tabs({ className }) {
      >
        {Object.keys(tabNames).map((key) => {
          const val = tabNames[key];

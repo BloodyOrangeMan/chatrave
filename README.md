@@ -78,10 +78,32 @@ tools/                    # scripts and CI checks
 
 ```bash
 pnpm run dev              # start full local dev (agent + strudel + alias)
+pnpm run build:agent-web  # build agent app
+pnpm run build:strudel    # build strudel website
+pnpm run build:all        # build both
 pnpm run typecheck
 pnpm run test
 pnpm run ci               # boundary + secrets + typecheck + tests
 ```
+
+## Deployment (Static-First)
+
+Chatrave is deployable as a static app with no backend required.
+
+- Agent and Strudel runtime logic run in browser.
+- Users provide their own OpenRouter API key in Settings (stored locally in browser).
+- Skills are bundled at build time, not loaded from runtime filesystem.
+
+For Vercel single-project deployment:
+
+1. Import the repo.
+2. Build command: `pnpm run build:strudel`
+3. Output directory: `strudel/website/dist`
+4. Install command: `pnpm install && pnpm -C strudel install`
+
+`vercel.json` includes these defaults.
+
+See `docs/DEPLOYMENT.md` for full deployment steps and production smoke checklist.
 
 ## Testing and CI
 
@@ -106,6 +128,8 @@ localStorage.setItem('chatraveAgentModuleUrl', 'http://localhost:4175/src/index.
 location.reload();
 ```
 
+Production default is same-origin `/chatrave-agent/agent-tab.js`.
+
 ### `http://localhost:4175/src/index.ts` refused
 
 - Agent dev server may be on another port; check `tools/run-dev.sh` output.
@@ -129,6 +153,7 @@ bash tools/apply-strudel-patches.sh
 ## Documentation Index
 
 - `AGENTS.md`
+- `docs/DEPLOYMENT.md`
 - `docs/UIUX.md`
 - `docs/STRUDEL_KNOWLEDGE_TOOL_SPEC.md`
 - `docs/AGENT_INTEGRATION_GUIDE.md`
