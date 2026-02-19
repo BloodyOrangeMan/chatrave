@@ -2,7 +2,6 @@ import { hashString, type ApplyStrudelChangeInput, type ReadCodeInput } from '@c
 import { getReferenceSnapshot, getSoundsSnapshot } from '@chatrave/strudel-adapter';
 import { transpiler } from '@strudel/transpiler/transpiler.mjs';
 import type { ReplSnapshot } from '@chatrave/shared-types';
-import { lintStrudelSemantics } from './semantic-lint';
 
 export interface AgentHostContext {
   started?: boolean;
@@ -127,12 +126,138 @@ function getLoadedSoundNames(): { ok: true; names: Set<string> } | { ok: false; 
   return { ok: false, reason: 'Loaded sound inventory unavailable. Refusing apply in fail-safe mode.' };
 }
 
-function dryRunValidate(code: string): { ok: true } | { ok: false; diagnostics: string[] } {
+const RUNTIME_DRY_RUN_TIMEOUT_MS = 1500;
+const SHADOWED_GLOBALS = ['setcpm', 'setCpm', 'setcps', 'setCps', 'hush', 'all', 'each'] as const;
+const STRUDEL_LOG_EVENT_KEY = 'strudel.log';
+const REJECTABLE_LOG_PATTERNS: RegExp[] = [
+  /\[voicing\]: unknown chord/i,
+  /unknown sound/i,
+  /not a note/i,
+];
+const DEFAULT_VOICING_SYMBOLS = new Set([
+  '',
+  'M',
+  'm',
+  'o',
+  'aug',
+  'm7',
+  '7',
+  '^7',
+  '69',
+  'm7b5',
+  '7b9',
+  '7b13',
+  'o7',
+  '7#11',
+  '7#9',
+  'mM7',
+  'm6',
+]);
+
+class RuntimeDryRunTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`runtime dry-run timed out after ${timeoutMs}ms`);
+    this.name = 'RuntimeDryRunTimeoutError';
+  }
+}
+
+function isProbeUnavailableError(message: string): boolean {
+  return /\b(note|s|stack|chord|setcpm|setcps)\b.*is not defined/i.test(message);
+}
+
+function toRejectableLogDiagnostics(messages: string[]): string[] {
+  const diagnostics = new Set<string>();
+  for (const raw of messages) {
+    const message = raw.trim();
+    if (!message) continue;
+    const matched = REJECTABLE_LOG_PATTERNS.some((pattern) => pattern.test(message));
+    if (!matched) continue;
+    diagnostics.add(`RUNTIME_DRY_RUN_LOG_DIAGNOSTIC: ${message}`);
+  }
+  return Array.from(diagnostics).slice(0, 5);
+}
+
+function lintVoicingChordSymbols(code: string): string[] {
+  const diagnostics: string[] = [];
+  const voicingRegex = /chord\s*\(\s*(["'`])([\s\S]*?)\1\s*\)\s*\.voicing\s*\(\s*\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = voicingRegex.exec(code)) !== null) {
+    const sequence = match[2] ?? '';
+    const tokens = sequence
+      .replace(/[<>|,]/g, ' ')
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+    for (const token of tokens) {
+      const chordMatch = token.match(/^([A-Ga-g][b#]?)([^/]*)$/);
+      if (!chordMatch) {
+        diagnostics.push(`RUNTIME_DRY_RUN_LOG_DIAGNOSTIC: [voicing]: unknown chord "${token}"`);
+        continue;
+      }
+      const symbol = (chordMatch[2] ?? '').trim();
+      if (!DEFAULT_VOICING_SYMBOLS.has(symbol)) {
+        diagnostics.push(`RUNTIME_DRY_RUN_LOG_DIAGNOSTIC: [voicing]: unknown chord "${token}"`);
+      }
+    }
+  }
+  return Array.from(new Set(diagnostics)).slice(0, 5);
+}
+
+async function runtimeDryRunValidate(code: string): Promise<{ ok: true } | { ok: false; diagnostics: string[] }> {
+  const voicingDiagnostics = lintVoicingChordSymbols(code);
+  if (voicingDiagnostics.length > 0) {
+    return { ok: false, diagnostics: voicingDiagnostics };
+  }
+  const runtimeLogMessages: string[] = [];
+  const onLog = (event: Event) => {
+    const detail = (event as CustomEvent<{ message?: unknown }>).detail;
+    const message = detail?.message;
+    if (typeof message === 'string') {
+      runtimeLogMessages.push(message);
+    }
+  };
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener(STRUDEL_LOG_EVENT_KEY, onLog as EventListener);
+  }
   try {
-    transpiler(code, { id: 'chatrave-shadow-dry-run' });
+    const transpiled = transpiler(code, { id: 'chatrave-shadow-dry-run' }) as { output?: unknown };
+    if (typeof transpiled.output !== 'string' || transpiled.output.length === 0) {
+      return { ok: false, diagnostics: ['RUNTIME_DRY_RUN_UNAVAILABLE: transpiler output unavailable'] };
+    }
+    const output = transpiled.output;
+    const runtimeGlobals = window as unknown as Record<string, unknown>;
+    const originals = SHADOWED_GLOBALS.map((name) => [name, runtimeGlobals[name]] as const);
+    SHADOWED_GLOBALS.forEach((name) => {
+      runtimeGlobals[name] = () => undefined;
+    });
+    try {
+      await Promise.race([
+        Function(`"use strict"; return (async ()=>{${output}})();`)() as Promise<unknown>,
+        new Promise((_, reject) => setTimeout(() => reject(new RuntimeDryRunTimeoutError(RUNTIME_DRY_RUN_TIMEOUT_MS)), RUNTIME_DRY_RUN_TIMEOUT_MS)),
+      ]);
+    } finally {
+      originals.forEach(([name, value]) => {
+        runtimeGlobals[name] = value;
+      });
+    }
+    const logDiagnostics = toRejectableLogDiagnostics(runtimeLogMessages);
+    if (logDiagnostics.length > 0) {
+      return { ok: false, diagnostics: logDiagnostics };
+    }
     return { ok: true };
   } catch (error) {
-    return { ok: false, diagnostics: [(error as Error).message || String(error)] };
+    const message = (error as Error).message || String(error);
+    if (error instanceof RuntimeDryRunTimeoutError) {
+      return { ok: false, diagnostics: [`RUNTIME_DRY_RUN_TIMEOUT: ${message}`] };
+    }
+    if (isProbeUnavailableError(message)) {
+      return { ok: false, diagnostics: [`RUNTIME_DRY_RUN_UNAVAILABLE: ${message}`] };
+    }
+    return { ok: false, diagnostics: [message] };
+  } finally {
+    if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+      document.removeEventListener(STRUDEL_LOG_EVENT_KEY, onLog as EventListener);
+    }
   }
 }
 
@@ -262,14 +387,9 @@ export function createStrudelBridge(hostContext?: AgentHostContext) {
       };
     }
 
-    const dry = dryRunValidate(nextCode);
+    const dry = await runtimeDryRunValidate(nextCode);
     if (!dry.ok) {
       return { status: 'rejected', phase: 'validate', diagnostics: dry.diagnostics };
-    }
-
-    const semantic = lintStrudelSemantics(nextCode);
-    if (!semantic.ok) {
-      return { status: 'rejected', phase: 'validate', diagnostics: semantic.diagnostics };
     }
 
     const referencedSounds = extractSoundNames(nextCode);

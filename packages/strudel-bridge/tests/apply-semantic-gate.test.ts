@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { hashString } from '@chatrave/agent-tools';
+import { transpiler } from '@strudel/transpiler/transpiler.mjs';
 
 vi.mock('@strudel/transpiler/transpiler.mjs', () => ({
-  transpiler: vi.fn(() => ({})),
+  transpiler: vi.fn((code: string) => ({ output: code })),
 }));
 
 vi.mock('@chatrave/strudel-adapter', () => ({
@@ -13,8 +14,12 @@ vi.mock('@chatrave/strudel-adapter', () => ({
 
 import { createStrudelBridge } from '../src/index';
 
-describe('applyStrudelChange semantic gate', () => {
-  it('rejects invalid chord().voicing() symbols before scheduling', async () => {
+describe('applyStrudelChange runtime dry-run gate', () => {
+  beforeEach(() => {
+    (window as unknown as Record<string, unknown>).note = undefined;
+  });
+
+  it('rejects runtime method-chain failures before scheduling', async () => {
     const editor = {
       code: 'setcpm(120/4)\nstack(s("bd*4"))',
       repl: { scheduler: { cps: 0.5 } },
@@ -30,17 +35,18 @@ describe('applyStrudelChange semantic gate', () => {
       baseHash: hashString(editor.code),
       change: {
         kind: 'full_code',
-        content: 'setcpm(128/4)\nconst c = chord("<c2m g1M>").voicing()\nstack(c)',
+        content: 'const bass = { lfo(){ return {}; } };\n bass.lfo().lfospeed();\n bass',
       },
     });
 
     expect(result.status).toBe('rejected');
     if (result.status !== 'rejected') throw new Error('Expected rejected result');
     expect(result.phase).toBe('validate');
-    expect(result.diagnostics?.some((line) => line.includes('INVALID_CHORD_VOICING_SYMBOL'))).toBe(true);
+    expect(result.diagnostics?.some((line) => line.includes('not a function'))).toBe(true);
   });
 
-  it('rejects unresolved param identifiers with NON_FINITE_PARAM_RISK', async () => {
+  it('rejects when runtime dry-run environment is unavailable', async () => {
+    vi.mocked(transpiler).mockImplementationOnce(() => ({}) as never);
     const editor = {
       code: 'setcpm(120/4)\nstack(s("bd*4"))',
       repl: { scheduler: { cps: 0.5 } },
@@ -56,13 +62,64 @@ describe('applyStrudelChange semantic gate', () => {
       baseHash: hashString(editor.code),
       change: {
         kind: 'full_code',
-        content: 'setcpm(128/4)\nconst b = note("c2").s("sawtooth").lpf(200 + saw.slow(8).range(100, 600))\nstack(b)',
+        content: 'const x = 1;\nx',
       },
     });
 
     expect(result.status).toBe('rejected');
     if (result.status !== 'rejected') throw new Error('Expected rejected result');
     expect(result.phase).toBe('validate');
-    expect(result.diagnostics?.some((line) => line.includes('NON_FINITE_PARAM_RISK'))).toBe(true);
+    expect(result.diagnostics?.some((line) => line.includes('RUNTIME_DRY_RUN_UNAVAILABLE'))).toBe(true);
   });
+
+  it('schedules when runtime dry-run succeeds', async () => {
+    const editor = {
+      code: 'setcpm(120/4)\nstack(s("bd*4"))',
+      repl: { scheduler: { cps: 0.5 } },
+      setCode: vi.fn(),
+    };
+
+    const bridge = createStrudelBridge({
+      editorRef: { current: editor },
+      handleEvaluate: vi.fn(),
+    });
+
+    const result = await bridge.applyStrudelChange({
+      baseHash: hashString(editor.code),
+      change: {
+        kind: 'full_code',
+        content: 'const groove = 1;\n groove',
+      },
+    });
+
+    expect(result.status).toBe('scheduled');
+  });
+
+  it('rejects unknown chord symbols in chord().voicing()', async () => {
+    const editor = {
+      code: 'setcpm(120/4)\nstack(s("bd*4"))',
+      repl: { scheduler: { cps: 0.5 } },
+      setCode: vi.fn(),
+    };
+
+    const bridge = createStrudelBridge({
+      editorRef: { current: editor },
+      handleEvaluate: vi.fn(),
+    });
+
+    const result = await bridge.applyStrudelChange({
+      baseHash: hashString(editor.code),
+      change: {
+        kind: 'full_code',
+        content: 'const chords = chord("Cmin~").voicing().s("triangle").lpf(800).room(0.3).gain(0.3)\nstack(chords)',
+      },
+    });
+
+    expect(result.status).toBe('rejected');
+    if (result.status !== 'rejected') throw new Error('Expected rejected result');
+    expect(result.phase).toBe('validate');
+    expect(result.diagnostics?.some((line) => line.includes('unknown chord'))).toBe(true);
+    expect(result.diagnostics?.some((line) => line.includes('Cmin~'))).toBe(true);
+  });
+
 });

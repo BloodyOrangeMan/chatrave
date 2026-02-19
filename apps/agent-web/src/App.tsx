@@ -14,11 +14,19 @@ import {
   writeDevFakeUiEnabled,
   writeRuntimeScenario,
 } from './runtime-overrides';
-import { clearChatSession, loadChatSession, saveChatSession } from './chat-session-store';
+import { clearChatSession, loadChatSessionGraph, saveChatSessionGraph } from './chat-session-store';
 import { formatJsonBlock } from './ui-helpers';
-import { IconCopy, IconRefresh, IconTrash, IconSettings, IconWrench, IconAgent, IconUser, IconMic, IconMicOff } from './icons';
+import { IconCopy, IconRefresh, IconTrash, IconSettings, IconWrench, IconAgent, IconUser, IconMic, IconMicOff, IconEdit, IconChevronLeft, IconChevronRight } from './icons';
 import { useVoiceInput } from './voice/use-voice-input';
 import { getThinkingPreview } from './thinking-preview';
+import {
+  activeMessages,
+  createEditedBranch,
+  revisionChoiceForMessage,
+  switchRevisionVariant,
+  updateActiveBranchMessages,
+  type RevisionChoice,
+} from './chat-branches';
 
 type ToolView = {
   id: string;
@@ -103,18 +111,27 @@ function MessageBubble({
   cooked,
   onRegenerate,
   expandToolsByDefault,
+  onEditUserMessage,
+  revision,
+  onSwitchRevision,
 }: {
   message: UIMessage;
   cooked?: string;
   onRegenerate: (messageId: string) => void;
   expandToolsByDefault: boolean;
+  onEditUserMessage: (messageId: string, text: string) => void;
+  revision?: RevisionChoice | null;
+  onSwitchRevision: (revisionKey: string, variantId: string) => void;
 }) {
   const text = textParts(message).trim();
   const thinking = reasoningParts(message).trim();
   const tools = toolParts(message);
   const [expandedToolMap, setExpandedToolMap] = useState<Record<string, boolean>>({});
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(text);
   const isAssistant = message.role === 'assistant';
+  const isUser = message.role === 'user';
   const isFinished = Boolean(cooked);
 
   const thinkingPreview = getThinkingPreview(thinking);
@@ -205,6 +222,32 @@ function MessageBubble({
 
         {text ? <div className={`msg-bubble ${isAssistant ? 'assistant' : 'user'}`}>{text}</div> : null}
 
+        {revision ? (
+          <div className="revision-row">
+            <button
+              type="button"
+              className="revision-btn"
+              disabled={revision.currentIndex <= 0}
+              title="Previous branch"
+              onClick={() => onSwitchRevision(revision.revisionKey, revision.variants[revision.currentIndex - 1]?.id ?? '')}
+            >
+              <IconChevronLeft />
+            </button>
+            <span className="revision-label">
+              Branch {revision.currentIndex + 1}/{revision.variants.length}
+            </span>
+            <button
+              type="button"
+              className="revision-btn"
+              disabled={revision.currentIndex >= revision.variants.length - 1}
+              title="Next branch"
+              onClick={() => onSwitchRevision(revision.revisionKey, revision.variants[revision.currentIndex + 1]?.id ?? '')}
+            >
+              <IconChevronRight />
+            </button>
+          </div>
+        ) : null}
+
         {isAssistant ? (
           <div className="msg-actions">
             <button type="button" className="icon-btn" title="Copy response" onClick={() => void copyToClipboard(text || thinking)}>
@@ -213,6 +256,52 @@ function MessageBubble({
             <button type="button" className="icon-btn" title="Regenerate" onClick={() => onRegenerate(message.id)}>
               <IconRefresh />
             </button>
+          </div>
+        ) : null}
+
+        {isUser ? (
+          <div className="msg-actions">
+            <button
+              type="button"
+              className="icon-btn"
+              title="Edit message and branch"
+              onClick={() => {
+                setEditDraft(text);
+                setEditing((value) => !value);
+              }}
+            >
+              <IconEdit />
+            </button>
+          </div>
+        ) : null}
+
+        {editing ? (
+          <div className="edit-panel">
+            <textarea value={editDraft} onChange={(event) => setEditDraft(event.target.value)} />
+            <div className="edit-actions">
+              <button
+                type="button"
+                className="head-btn"
+                onClick={() => {
+                  setEditing(false);
+                  setEditDraft(text);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="send-btn"
+                onClick={() => {
+                  const trimmed = editDraft.trim();
+                  if (!trimmed) return;
+                  setEditing(false);
+                  onEditUserMessage(message.id, trimmed);
+                }}
+              >
+                Save as branch
+              </button>
+            </div>
           </div>
         ) : null}
       </div>
@@ -257,13 +346,14 @@ function ChatRuntimePane({
 }) {
   const [draft, setDraft] = useState('');
   const [isComposing, setIsComposing] = useState(false);
+  const [sessionGraph, setSessionGraph] = useState(() => loadChatSessionGraph());
   const turnStartRef = useRef<number | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [pinnedToBottom, setPinnedToBottom] = useState(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   const { messages, setMessages, sendMessage, stop, regenerate, status, error } = useChat<any>({
-    messages: loadChatSession() as UIMessage[],
+    messages: activeMessages(sessionGraph) as UIMessage[],
     transport: runtime.transport,
     onFinish: ({ message }) => {
       let cooked: string | undefined;
@@ -292,7 +382,11 @@ function ChatRuntimePane({
   });
 
   useEffect(() => {
-    saveChatSession(messages);
+    setSessionGraph((prev) => {
+      const next = updateActiveBranchMessages(prev, messages as UIMessage[]);
+      saveChatSessionGraph(next);
+      return next;
+    });
   }, [messages]);
 
   useEffect(() => {
@@ -309,6 +403,24 @@ function ChatRuntimePane({
     setDraft('');
     turnStartRef.current = Date.now();
     await sendMessage({ text: value });
+  };
+
+  const editUserMessage = (messageId: string, editedText: string): void => {
+    if (status === 'streaming' || status === 'submitted') return;
+    const result = createEditedBranch(sessionGraph, { messageId, newText: editedText });
+    if (!result) return;
+    setSessionGraph(result.session);
+    saveChatSessionGraph(result.session);
+    setMessages(activeMessages(result.session));
+    void submit(result.promptText);
+  };
+
+  const switchRevision = (revisionKey: string, variantId: string): void => {
+    const next = switchRevisionVariant(sessionGraph, { revisionKey, variantId });
+    if (next === sessionGraph) return;
+    setSessionGraph(next);
+    setMessages(activeMessages(next));
+    saveChatSessionGraph(next);
   };
 
   const voice = useVoiceInput({
@@ -384,6 +496,9 @@ function ChatRuntimePane({
             message={message}
             cooked={cookedLabelFromMessage(message)}
             expandToolsByDefault={expandToolsByDefault}
+            revision={revisionChoiceForMessage(sessionGraph, message)}
+            onEditUserMessage={editUserMessage}
+            onSwitchRevision={switchRevision}
             onRegenerate={(id) => {
               turnStartRef.current = Date.now();
               void regenerate({ messageId: id });
@@ -490,13 +605,14 @@ export function AgentApp({ hostContext }: { hostContext?: AgentHostContext }) {
     const input: StrudelKnowledgeInput = { query: { q: query, domain: 'auto' } };
     const result = await runtime.runDevKnowledge(input);
     const display = `[Dev] strudel_knowledge(${query}) => ${JSON.stringify(result)}`;
-    const existing = loadChatSession() as UIMessage[];
+    const session = loadChatSessionGraph();
+    const existing = activeMessages(session);
     const synthetic: UIMessage = {
       id: `dev-${Date.now()}`,
       role: 'assistant',
       parts: [{ type: 'text', text: display }],
     } as unknown as UIMessage;
-    saveChatSession([...existing, synthetic]);
+    saveChatSessionGraph(updateActiveBranchMessages(session, [...existing, synthetic]));
     setSessionEpoch((value) => value + 1);
   };
 
