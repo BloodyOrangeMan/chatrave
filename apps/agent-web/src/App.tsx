@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import type { UIMessage } from 'ai';
+import ReactMarkdown from 'react-markdown';
 import { DEFAULT_AGENT_SETTINGS, type AgentSettings } from '@chatrave/shared-types';
 import { loadSettings, saveSettings } from '@chatrave/storage-local';
 import type { StrudelKnowledgeInput } from '@chatrave/agent-tools';
@@ -220,7 +221,11 @@ function MessageBubble({
           );
         })}
 
-        {text ? <div className={`msg-bubble ${isAssistant ? 'assistant' : 'user'}`}>{text}</div> : null}
+        {text ? (
+          <div className={`msg-bubble ${isAssistant ? 'assistant' : 'user'}`}>
+            <ReactMarkdown>{text}</ReactMarkdown>
+          </div>
+        ) : null}
 
         {revision ? (
           <div className="revision-row">
@@ -633,7 +638,7 @@ export function AgentApp({ hostContext }: { hostContext?: AgentHostContext }) {
         </div>
       </div>
       <div className="mode-strip">
-        <div className={`mode-pill ${mockEnabled ? 'on' : 'off'}`}>
+        <div className={`mode-pill ${mockEnabled ? 'off' : 'on'}`}>
           Mode: {mockEnabled ? 'Mock LLM' : 'Real OpenRouter'}
         </div>
         <div className={`mode-pill ${settings.skillsEnabled ? 'on' : 'off'}`}>

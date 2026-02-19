@@ -478,6 +478,44 @@
   border-bottom-left-radius: var(--radius-sm);
 }
 
+.msg-bubble > *:first-child {
+  margin-top: 0;
+}
+
+.msg-bubble > *:last-child {
+  margin-bottom: 0;
+}
+
+.msg-bubble p {
+  margin: 0 0 8px;
+}
+
+.msg-bubble pre {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  overflow: auto;
+}
+
+.msg-bubble code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.msg-bubble p code {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  background: var(--panel);
+}
+
+.msg-bubble a {
+  color: var(--user);
+  text-decoration: underline;
+}
+
 /* Thinking Bar */
 .thinking-bar {
   width: 100%;
