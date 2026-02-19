@@ -3,7 +3,6 @@ import { ToolLoopAgent, stepCountIs, tool } from 'ai';
 import { dispatchToolCall, type KnowledgeSources, type ToolCall } from '@chatrave/agent-tools';
 import { z } from 'zod';
 import { buildSystemPrompt } from './system-prompt';
-import { getMockScenario } from './mock-scenarios';
 import type { CreateJamAgentConfig } from './types';
 
 function mapReasoningEffort(mode: 'fast' | 'balanced' | 'deep'): 'low' | 'medium' | 'high' {
@@ -23,7 +22,6 @@ function createApplyInputSchema() {
         replace: z.string(),
         occurrence: z.enum(['single', 'all']).optional(),
       }),
-      z.object({ kind: z.literal('patch'), content: z.string() }),
     ]),
   });
 }
@@ -192,9 +190,4 @@ export function createJamAgent(config: CreateJamAgentConfig) {
       };
     },
   });
-}
-
-export function createMockJamAgent(config: CreateJamAgentConfig & { scenario?: string }) {
-  void getMockScenario(config.scenario);
-  return createJamAgent(config);
 }

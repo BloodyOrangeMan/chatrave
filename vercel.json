@@ -1,6 +1,6 @@
 {
   "installCommand": "pnpm install && pnpm -C strudel install",
-  "buildCommand": "pnpm run build:strudel",
+  "buildCommand": "pnpm run build",
   "outputDirectory": "strudel/website/dist",
   "framework": null
 }

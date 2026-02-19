@@ -16,7 +16,7 @@ rm -f "${STRUDEL_LOG}"
 echo "Building and staging agent bundle for same-origin dev..."
 (
   cd "${ROOT_DIR}"
-  pnpm run build:agent-web
+  pnpm --filter @chatrave/agent-web build
   node tools/stage-agent-web.mjs
 )
 

@@ -12,7 +12,7 @@ We do not use a submodule + patch overlay model anymore.
 - `strudel/website/src/repl/components/panel/Panel.jsx`
   - agent tab host and module bootstrap
   - production-safe same-origin loading
-  - localhost fallbacks for local dev only
+  - same-origin agent asset loading (`/chatrave-agent/index.css`, `/chatrave-agent/agent-tab.js`)
 
 ## Disallowed
 - broad Strudel refactors unrelated to integration

@@ -36,10 +36,7 @@ pnpm -C strudel install
 From repo root:
 
 ```bash
-pnpm run build:agent-web   # builds stable agent module (agent-tab.js)
-pnpm run stage:agent-web   # copies agent dist into strudel public assets
-pnpm run build:strudel     # applies overlays + builds agent + stages + generates doc.json + builds strudel
-pnpm run build:all         # alias of build:strudel
+pnpm run build             # builds agent module, stages assets, generates doc.json, builds strudel website
 ```
 
 Outputs:
@@ -53,7 +50,7 @@ This repo is configured for a single Vercel project serving Strudel at `/`.
 
 1. Import repo in Vercel.
 2. Keep root directory as repo root.
-3. Build command: `pnpm run build:strudel`
+3. Build command: `pnpm run build`
 4. Output directory: `strudel/website/dist`
 5. Install command: `pnpm install && pnpm -C strudel install`
 
@@ -61,7 +58,7 @@ If you see an error like:
 
 `Could not resolve "../../../doc.json" from "src/docs/JsDoc.jsx"`
 
-it means `strudel/doc.json` was not generated in the build environment. `build:strudel` now runs `pnpm -C strudel jsdoc-json` before website build to prevent this.
+it means `strudel/doc.json` was not generated in the build environment. `build` runs `pnpm -C strudel jsdoc-json` before website build to prevent this.
 
 `vercel.json` already contains these defaults.
 

@@ -70,10 +70,8 @@ tools/                    # scripts and CI checks
 ## Development Commands
 
 ```bash
-pnpm run dev              # start full local dev (agent + strudel + alias)
-pnpm run build:agent-web  # build agent app
-pnpm run build:strudel    # build strudel website
-pnpm run build:all        # build both
+pnpm run dev              # start full local dev
+pnpm run build            # build production site (agent bundle + stage + strudel website)
 pnpm run typecheck
 pnpm run test
 pnpm run ci               # secrets + typecheck + tests
@@ -90,7 +88,7 @@ Chatrave is deployable as a static app with no backend required.
 For Vercel single-project deployment:
 
 1. Import the repo.
-2. Build command: `pnpm run build:strudel`
+2. Build command: `pnpm run build`
 3. Output directory: `strudel/website/dist`
 4. Install command: `pnpm install && pnpm -C strudel install`
 

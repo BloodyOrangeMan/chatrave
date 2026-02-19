@@ -10,7 +10,7 @@ if [[ ! -f "${ROOT_DIR}/strudel/website/package.json" ]]; then
 fi
 
 cd "${ROOT_DIR}"
-pnpm run build:agent-web
+pnpm --filter @chatrave/agent-web build
 node tools/stage-agent-web.mjs
 pnpm -C strudel jsdoc-json
 

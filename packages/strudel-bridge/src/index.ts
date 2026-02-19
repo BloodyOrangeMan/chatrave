@@ -379,12 +379,6 @@ export function createStrudelBridge(hostContext?: AgentHostContext) {
         };
       }
       nextCode = occurrence === 'all' ? activeCode.split(input.change.search).join(input.change.replace) : activeCode.replace(input.change.search, input.change.replace);
-    } else {
-      return {
-        status: 'rejected',
-        phase: 'validate',
-        diagnostics: ['patch is deprecated; use search_replace or full_code'],
-      };
     }
 
     const dry = await runtimeDryRunValidate(nextCode);

@@ -34,11 +34,6 @@ export interface ApplyStrudelChangeInput {
         search: string;
         replace: string;
         occurrence?: 'single' | 'all';
-      }
-    | {
-        // Deprecated legacy mode kept for explicit validation rejection.
-        kind: 'patch';
-        content: string;
       };
 }
 

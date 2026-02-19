@@ -8,7 +8,7 @@ const destDir = resolve(root, 'strudel/website/public/chatrave-agent');
 
 if (!existsSync(srcDir)) {
   console.error(`Missing agent-web build output at ${srcDir}`);
-  console.error('Run: pnpm run build:agent-web');
+  console.error('Run: pnpm --filter @chatrave/agent-web build');
   process.exit(1);
 }
 

@@ -292,8 +292,10 @@ function AgentTabHost({ context }) {
         return;
       }
 
+      const cssUrl = `${window.location.origin}/chatrave-agent/index.css`;
       const moduleUrl = `${window.location.origin}/chatrave-agent/agent-tab.js`;
       try {
+        await ensureStylesheetLoaded(cssUrl);
         // eslint-disable-next-line no-eval
         await import(/* @vite-ignore */ moduleUrl);
         window.__CHATRAVE_INIT_AGENT_TAB__?.();
@@ -331,6 +333,36 @@ function AgentTabHost({ context }) {
       )}
     </div>
   );
+}
+
+function ensureStylesheetLoaded(href) {
+  const existing = document.querySelector(`link[data-chatrave-agent-css="1"][href="${href}"]`);
+  if (existing) {
+    if (existing.dataset.loaded === '1') {
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error(`Failed to load stylesheet: ${href}`)), { once: true });
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    link.dataset.chatraveAgentCss = '1';
+    link.addEventListener(
+      'load',
+      () => {
+        link.dataset.loaded = '1';
+        resolve();
+      },
+      { once: true },
+    );
+    link.addEventListener('error', () => reject(new Error(`Failed to load stylesheet: ${href}`)), { once: true });
+    document.head.appendChild(link);
+  });
 }
 
 function PanelTab({ label, isSelected, onClick }) {

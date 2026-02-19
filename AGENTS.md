@@ -209,7 +209,6 @@ Apply safety:
 
 ### `agent-core`
 - `createJamAgent(...)`
-- `createMockJamAgent(...)`
 
 ### `strudel-bridge`
 - `getReplSnapshot()`

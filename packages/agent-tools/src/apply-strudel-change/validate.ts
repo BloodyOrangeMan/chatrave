@@ -10,10 +10,6 @@ export function validateApplyChange(input: ApplyStrudelChangeInput): ApplyValida
     return { ok: false, diagnostics: ['baseHash is required'] };
   }
 
-  if (input.change.kind === 'patch') {
-    return { ok: false, diagnostics: ['patch is deprecated; use search_replace or full_code'] };
-  }
-
   if (input.change.kind === 'full_code') {
     if (!input.change.content.trim()) {
       return { ok: false, diagnostics: ['Full code cannot be empty'] };
