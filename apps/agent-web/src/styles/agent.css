@@ -520,6 +520,10 @@
   text-transform: uppercase;
 }
 
+.thinking-title.finished {
+  text-transform: none;
+}
+
 .thinking-title::before {
   content: '>';
   font-size: 12px;
@@ -530,6 +534,15 @@
   color: color-mix(in srgb, var(--thinking) 25%, var(--text));
   font-size: 12px;
   line-height: 1.5;
+}
+
+.thinking-preview.collapsed {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thinking-preview.expanded {
   white-space: pre-wrap;
 }
 
@@ -552,6 +565,15 @@
   border-radius: 50%;
   background: var(--thinking);
   opacity: 0.6;
+}
+
+.thinking-bar:disabled {
+  cursor: default;
+  opacity: 0.9;
+}
+
+.thinking-bar.finished {
+  border-color: var(--thinking-line);
 }
 
 /* Tool Items */

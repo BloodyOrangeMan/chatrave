@@ -2,6 +2,7 @@ import { hashString, type ApplyStrudelChangeInput, type ReadCodeInput } from '@c
 import { getReferenceSnapshot, getSoundsSnapshot } from '@chatrave/strudel-adapter';
 import { transpiler } from '@strudel/transpiler/transpiler.mjs';
 import type { ReplSnapshot } from '@chatrave/shared-types';
+import { lintStrudelSemantics } from './semantic-lint';
 
 export interface AgentHostContext {
   started?: boolean;
@@ -264,6 +265,11 @@ export function createStrudelBridge(hostContext?: AgentHostContext) {
     const dry = dryRunValidate(nextCode);
     if (!dry.ok) {
       return { status: 'rejected', phase: 'validate', diagnostics: dry.diagnostics };
+    }
+
+    const semantic = lintStrudelSemantics(nextCode);
+    if (!semantic.ok) {
+      return { status: 'rejected', phase: 'validate', diagnostics: semantic.diagnostics };
     }
 
     const referencedSounds = extractSoundNames(nextCode);

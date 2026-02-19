@@ -18,6 +18,7 @@ import { clearChatSession, loadChatSession, saveChatSession } from './chat-sessi
 import { formatJsonBlock } from './ui-helpers';
 import { IconCopy, IconRefresh, IconTrash, IconSettings, IconWrench, IconAgent, IconUser, IconMic, IconMicOff } from './icons';
 import { useVoiceInput } from './voice/use-voice-input';
+import { getThinkingPreview } from './thinking-preview';
 
 type ToolView = {
   id: string;
@@ -114,18 +115,32 @@ function MessageBubble({
   const [expandedToolMap, setExpandedToolMap] = useState<Record<string, boolean>>({});
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const isAssistant = message.role === 'assistant';
+  const isFinished = Boolean(cooked);
 
-  const thinkingPreview = thinking.length > 140 ? `${thinking.slice(0, 140)}...` : thinking;
+  const thinkingPreview = getThinkingPreview(thinking);
 
   return (
     <div className={`msg-row ${isAssistant ? 'assistant' : 'user'}`}>
       <div className="msg-avatar">{isAssistant ? <IconAgent /> : <IconUser />}</div>
       <div className="msg-body">
-        {thinking ? (
-          <button type="button" className="thinking-bar" onClick={() => setThinkingExpanded((v) => !v)}>
-            <span className="thinking-title">Thinking</span>
-            <span className="thinking-preview">{thinkingExpanded ? thinking : thinkingPreview}</span>
-            {cooked ? <span className="cooked-label">{cooked}</span> : null}
+        {thinking || cooked ? (
+          <button
+            type="button"
+            className={`thinking-bar ${isFinished ? 'finished' : ''}`}
+            onClick={() => {
+              if (!thinking) return;
+              setThinkingExpanded((v) => !v);
+            }}
+            disabled={!thinking}
+          >
+            <span className={`thinking-title ${isFinished ? 'finished' : ''}`}>
+              {isFinished && cooked ? `Thinking · ${cooked}` : 'Thinking'}
+            </span>
+            {thinking && (!isFinished || thinkingExpanded) ? (
+              <span className={`thinking-preview ${thinkingExpanded ? 'expanded' : 'collapsed'}`}>
+                {thinkingExpanded ? thinking : thinkingPreview}
+              </span>
+            ) : null}
           </button>
         ) : null}
 
