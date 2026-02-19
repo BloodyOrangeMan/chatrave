@@ -1,15 +1,14 @@
 diff --git a/website/src/repl/components/panel/Panel.jsx b/website/src/repl/components/panel/Panel.jsx
-index 25ed3e72..013cdf8c 100644
+index 3b4dd548..013cdf8c 100644
 --- a/website/src/repl/components/panel/Panel.jsx
 +++ b/website/src/repl/components/panel/Panel.jsx
-@@ -1,5 +1,5 @@
+@@ -1,4 +1,5 @@
  import { Bars3Icon, PlayIcon, StopIcon, XMarkIcon } from '@heroicons/react/16/solid';
--import { useEffect, useRef } from 'react';
 +import { useEffect, useRef, useState } from 'react';
  import cx from '@src/cx.mjs';
  import { StrudelIcon } from '@src/repl/components/icons/StrudelIcon';
  import { useSettings, setIsZen, setIsPanelOpened, setActiveFooter as setTab } from '../../../settings.mjs';
-@@ -12,7 +12,6 @@ import { PatternsTab } from './PatternsTab';
+@@ -11,7 +12,6 @@ import { PatternsTab } from './PatternsTab';
  import { Reference } from './Reference';
  import { SettingsTab } from './SettingsTab';
  import { SoundsTab } from './SoundsTab';
@@ -17,7 +16,7 @@ index 25ed3e72..013cdf8c 100644
  
  const TAURI = typeof window !== 'undefined' && window.__TAURI__;
  
-@@ -205,19 +204,22 @@ export function RightPanel({ context }) {
+@@ -204,7 +204,7 @@ export function RightPanel({ context }) {
  }
  
  const tabNames = {
@@ -26,12 +25,7 @@ index 25ed3e72..013cdf8c 100644
    patterns: 'patterns',
    sounds: 'sounds',
    reference: 'reference',
-   export: 'export',
-   console: 'console',
-   settings: 'settings',
--  agent: 'agent',
- };
- if (TAURI) {
+@@ -216,6 +216,10 @@ if (TAURI) {
    tabNames.files = 'files';
  }
  
@@ -42,7 +36,7 @@ index 25ed3e72..013cdf8c 100644
  function PanelNav({ children, className, ...props }) {
    const settings = useSettings();
    return (
-@@ -238,7 +240,7 @@ function PanelNav({ children, className, ...props }) {
+@@ -236,7 +240,7 @@ function PanelNav({ children, className, ...props }) {
  
  function PanelContent({ context, tab }) {
    useLogger();
@@ -51,7 +45,12 @@ index 25ed3e72..013cdf8c 100644
      case tabNames.patterns:
        return <PatternsTab context={context} />;
      case tabNames.console:
-@@ -256,27 +258,94 @@ function PanelContent({ context, tab }) {
+@@ -249,13 +253,101 @@ function PanelContent({ context, tab }) {
+       return <ExportTab handleExport={context.handleExport} />;
+     case tabNames.settings:
+       return <SettingsTab started={context.started} />;
++    case tabNames.agent:
++      return <AgentTabHost context={context} />;
      case tabNames.files:
        return <FilesTab />;
      default:
@@ -60,25 +59,21 @@ index 25ed3e72..013cdf8c 100644
    }
  }
  
- function AgentTabHost({ context }) {
-   const hostRef = useRef(null);
++function AgentTabHost({ context }) {
++  const hostRef = useRef(null);
 +  const contextProxyRef = useRef({});
 +  const [status, setStatus] = useState('booting');
 +  const [bootError, setBootError] = useState('');
 +
 +  Object.assign(contextProxyRef.current, context);
- 
-   useEffect(() => {
++
++  useEffect(() => {
 +    let canceled = false;
-     const host = hostRef.current;
--    const renderer = window.__CHATRAVE_AGENT_TAB_RENDERER__;
--    if (!host || !renderer) {
--      return;
++    const host = hostRef.current;
 +    if (!host) {
 +      return () => {};
-     }
- 
--    renderer.render(host, context);
++    }
++
 +    const renderIntoHost = () => {
 +      const renderer = window.__CHATRAVE_AGENT_TAB_RENDERER__;
 +      if (!renderer) {
@@ -126,16 +121,13 @@ index 25ed3e72..013cdf8c 100644
 +
 +    bootstrap();
 +
-     return () => {
--      renderer.unmount?.(host);
++    return () => {
 +      canceled = true;
 +      const renderer = window.__CHATRAVE_AGENT_TAB_RENDERER__;
 +      renderer?.unmount?.(host);
-     };
--  }, [context]);
++    };
 +  }, []);
- 
--  return <div id="agent-tab" ref={hostRef} className="w-full h-full" />;
++
 +  return (
 +    <div className="w-full h-full relative">
 +      <div id="agent-tab" ref={hostRef} className="w-full h-full" />
@@ -151,10 +143,12 @@ index 25ed3e72..013cdf8c 100644
 +      )}
 +    </div>
 +  );
- }
- 
++}
++
  function PanelTab({ label, isSelected, onClick }) {
-@@ -296,6 +365,7 @@ function PanelTab({ label, isSelected, onClick }) {
+   return (
+     <>
+@@ -273,6 +365,7 @@ function PanelTab({ label, isSelected, onClick }) {
  }
  function Tabs({ className }) {
    const { isPanelOpen, activeFooter: tab } = useSettings();
@@ -162,7 +156,7 @@ index 25ed3e72..013cdf8c 100644
    return (
      <div
        className={cx(
-@@ -305,7 +375,9 @@ function Tabs({ className }) {
+@@ -282,7 +375,9 @@ function Tabs({ className }) {
      >
        {Object.keys(tabNames).map((key) => {
          const val = tabNames[key];
