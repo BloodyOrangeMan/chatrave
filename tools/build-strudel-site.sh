@@ -11,7 +11,6 @@ fi
 
 cd "${ROOT_DIR}"
 pnpm --filter @chatrave/agent-web build
-node tools/stage-agent-web.mjs
 pnpm -C strudel jsdoc-json
 
 if [[ ! -f "${ROOT_DIR}/strudel/doc.json" ]]; then
@@ -20,4 +19,5 @@ if [[ ! -f "${ROOT_DIR}/strudel/doc.json" ]]; then
   exit 1
 fi
 
+node tools/stage-agent-web.mjs
 pnpm -C strudel/website build

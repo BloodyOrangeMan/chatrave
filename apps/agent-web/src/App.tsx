@@ -389,6 +389,9 @@ function ChatRuntimePane({
   useEffect(() => {
     setSessionGraph((prev) => {
       const next = updateActiveBranchMessages(prev, messages as UIMessage[]);
+      if (next === prev) {
+        return prev;
+      }
       saveChatSessionGraph(next);
       return next;
     });

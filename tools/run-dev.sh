@@ -17,6 +17,7 @@ echo "Building and staging agent bundle for same-origin dev..."
 (
   cd "${ROOT_DIR}"
   pnpm --filter @chatrave/agent-web build
+  pnpm -C strudel jsdoc-json
   node tools/stage-agent-web.mjs
 )
 

@@ -159,7 +159,32 @@ export function activeMessages(session: ChatBranchSession): UIMessage[] {
   return session.branches[session.activeBranchId]?.messages ?? [];
 }
 
+function messageSnapshot(message: UIMessage): string {
+  return JSON.stringify({
+    id: message.id,
+    role: message.role,
+    metadata: message.metadata ?? null,
+    parts: message.parts ?? null,
+  });
+}
+
+function messageListEquivalent(left: UIMessage[], right: UIMessage[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (messageSnapshot(left[index] as UIMessage) !== messageSnapshot(right[index] as UIMessage)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function updateActiveBranchMessages(session: ChatBranchSession, messages: UIMessage[]): ChatBranchSession {
+  const active = session.branches[session.activeBranchId];
+  if (!active) return session;
+  if (messageListEquivalent(active.messages, messages)) {
+    return session;
+  }
+
   const next: ChatBranchSession = {
     ...session,
     branches: { ...session.branches },

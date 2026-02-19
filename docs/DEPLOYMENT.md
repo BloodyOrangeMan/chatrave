@@ -42,6 +42,7 @@ pnpm run build             # builds agent module, stages assets, generates doc.j
 Outputs:
 - Agent bundle: `apps/agent-web/dist/`
 - Staged agent assets: `strudel/website/public/chatrave-agent/`
+  - includes `agent-tab.js`, `index.css`, and `reference-doc.json` (copied from `strudel/doc.json`)
 - Production site: `strudel/website/dist/`
 
 ## Vercel (Recommended)
@@ -64,6 +65,7 @@ it means `strudel/doc.json` was not generated in the build environment. `build` 
 
 Production agent loading behavior:
 - tries same-origin module first: `/chatrave-agent/agent-tab.js`
+- loads Strudel reference knowledge from same-origin `/chatrave-agent/reference-doc.json`
 - no localhost fallback URLs in production or dev runtime.
 
 ## Static Hosting
@@ -89,9 +91,10 @@ After deploy:
 1. Strudel page loads and audio controls work.
 2. Agent tab loads inside side panel.
 3. In mock mode, skill list/get works (e.g. `jazz`, `techno`, `house`).
-4. In real mode, OpenRouter requests work with user-provided key.
-5. Apply tool rejects invalid code and schedules valid code.
-6. Tool logs and markdown rendering display correctly.
+4. `strudel_knowledge` reference queries (e.g. `room`, `roomsize`) return authoritative matches.
+5. In real mode, OpenRouter requests work with user-provided key.
+6. Apply tool rejects invalid code and schedules valid code.
+7. Tool logs and markdown rendering display correctly.
 
 ## Optional Future Backend Mode
 

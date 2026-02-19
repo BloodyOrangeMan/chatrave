@@ -84,4 +84,14 @@ describe('chat-branches', () => {
     expect(firstUserChoice).toBeNull();
     expect(editedUserChoice?.variants.length).toBe(2);
   });
+
+  it('returns same session for semantically unchanged message snapshots', () => {
+    const session = createSessionFromMessages([
+      userMessage('u1', 'hello'),
+      assistantMessage('a1', 'world'),
+    ]);
+    const cloned = activeMessages(session).map((message) => JSON.parse(JSON.stringify(message)) as UIMessage);
+    const next = updateActiveBranchMessages(session, cloned);
+    expect(next).toBe(session);
+  });
 });

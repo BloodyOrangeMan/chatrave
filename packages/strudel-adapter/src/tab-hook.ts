@@ -135,8 +135,21 @@ async function tryFetchJson(url: string): Promise<unknown | null> {
   }
 }
 
+function referenceCandidates(): string[] {
+  const candidates: string[] = [];
+  if (typeof window !== 'undefined') {
+    const origin = window.location?.origin;
+    if (typeof origin === 'string' && /^https?:\/\//.test(origin)) {
+      candidates.push(`${origin}/chatrave-agent/reference-doc.json`);
+    }
+  }
+  candidates.push('/chatrave-agent/reference-doc.json');
+  candidates.push(new URL('../../../strudel/doc.json', import.meta.url).toString());
+  return Array.from(new Set(candidates));
+}
+
 export async function getReferenceSnapshot(): Promise<StrudelReferenceSnapshotItem[]> {
-  const candidates = [new URL('../../../strudel/doc.json', import.meta.url).toString()];
+  const candidates = referenceCandidates();
 
   for (const candidate of candidates) {
     const payload = await tryFetchJson(candidate);
@@ -145,6 +158,7 @@ export async function getReferenceSnapshot(): Promise<StrudelReferenceSnapshotIt
       return normalized;
     }
   }
+  console.warn('[chatrave][knowledge] reference snapshot unavailable', { candidates });
   return [];
 }
 

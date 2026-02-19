@@ -114,6 +114,11 @@ Checks include:
 - Agent now loads from same-origin `/chatrave-agent/agent-tab.js` in both dev and production.
 - If agent code changed, rerun `pnpm run dev` to rebuild and stage the bundle.
 
+### Strudel knowledge shows `not_found` for known functions
+
+- Ensure build/deploy includes staged reference asset: `/chatrave-agent/reference-doc.json`.
+- Use `pnpm run build` (this generates `strudel/doc.json` and stages `reference-doc.json` automatically).
+
 ## Documentation Index
 
 - `AGENTS.md`
