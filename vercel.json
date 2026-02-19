@@ -1,5 +1,5 @@
 {
-  "installCommand": "git submodule sync --recursive && git submodule update --init --recursive --depth 1 && pnpm install && pnpm -C strudel install",
+  "installCommand": "pnpm install && pnpm -C strudel install",
   "buildCommand": "pnpm run build:strudel",
   "outputDirectory": "strudel/website/dist",
   "framework": null

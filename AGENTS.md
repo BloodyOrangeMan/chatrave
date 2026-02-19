@@ -10,7 +10,7 @@ Reference docs:
 - `docs/AGENT_INTEGRATION_GUIDE.md`
 
 Hard constraints:
-- Keep `strudel/` as an intact, read-only git submodule.
+- Keep `strudel/` as tracked source in this repository.
 - Reuse original Strudel code; do not reimplement Strudel.
 - Only online dependency is LLM API calls (user-provided key).
 - Everything else runs locally in browser (validation, tool orchestration, storage, chat state).
@@ -80,7 +80,7 @@ Hard constraints:
 ### Workspace Layout
 ```text
 .
-├─ strudel/                       # upstream submodule (read-only)
+├─ strudel/                       # tracked Strudel source (editable)
 ├─ apps/
 │  └─ agent-web/                  # side-tab UI
 ├─ packages/
@@ -94,7 +94,7 @@ Hard constraints:
 ```
 
 ### Boundaries
-- `strudel/`: vendor boundary, no feature edits.
+- `strudel/`: direct integration surface for panel and build/runtime wiring.
 - `packages/strudel-bridge`: only place applying/reading runtime Strudel editor state.
 - `packages/agent-tools`: tool logic and validation contracts.
 - `packages/agent-core`: AI SDK orchestration + tool wiring.
@@ -238,7 +238,6 @@ Apply safety:
 - UI tool-log and streaming behavior tests
 
 ### Required CI Checks
-- fail if tracked files under `strudel/**` are changed
 - typecheck + tests must pass
 
 ---
@@ -249,11 +248,10 @@ Apply safety:
 - modular tool architecture (`agent-tools`)
 - completed-only per-message tool logs
 - thinking-time indicator per assistant message
-- read-only submodule guardrails in CI
 
 ---
 
 ## Non-Goals (Current)
 - backend infrastructure
 - multi-user collaboration
-- modifying Strudel vendor code for product features
+- large-scale Strudel refactors unrelated to integration

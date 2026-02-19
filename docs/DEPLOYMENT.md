@@ -23,11 +23,6 @@ Skills do not depend on runtime filesystem access in production.
 
 - `node >= 20`
 - `pnpm 10.4.1`
-- submodule initialized:
-
-```bash
-git submodule update --init --recursive
-```
 
 Install dependencies:
 
@@ -60,9 +55,7 @@ This repo is configured for a single Vercel project serving Strudel at `/`.
 2. Keep root directory as repo root.
 3. Build command: `pnpm run build:strudel`
 4. Output directory: `strudel/website/dist`
-5. Install command: `git submodule sync --recursive && git submodule update --init --recursive --depth 1 && pnpm install && pnpm -C strudel install`
-
-If Vercel UI shows submodule fetch warnings, keep this install command exactly as above so deploy retries submodule init during install.
+5. Install command: `pnpm install && pnpm -C strudel install`
 
 If you see an error like:
 

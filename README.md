@@ -14,7 +14,6 @@ Active development. APIs and internal structure may change.
 
 - `node >= 20`
 - `pnpm 10.4.1`
-- `git` with submodule support
 - Linux/macOS shell (Windows: use WSL2 recommended)
 
 ## Quick Start (Recommended)
@@ -22,7 +21,6 @@ Active development. APIs and internal structure may change.
 ```bash
 git clone <your-repo-url>
 cd chatrave
-git submodule update --init --recursive
 pnpm install
 pnpm -C strudel install
 pnpm run dev
@@ -42,16 +40,13 @@ In Agent tab UI:
 
 Available scenarios are defined in `packages/agent-core/src/mock-scenarios.ts`.
 
-## Strudel Submodule Policy (Important)
+## Strudel Source Policy (Important)
 
-`strudel/` is an upstream submodule boundary.
+`strudel/` is tracked directly in this repository.
 
-We keep integration changes as patch overlays:
-- Patch files: `patches/strudel/*.patch`
-- Apply script: `tools/apply-strudel-patches.sh`
-- Dev bootstrap applies overlays automatically via `tools/run-dev.sh`
-
-If overlay apply fails (upstream drift), sync submodule and refresh the patch.
+- Make Strudel integration changes directly under `strudel/website/...`.
+- Keep agent business logic in `apps/` and `packages/`.
+- Use `tools/build-strudel-site.sh` for production builds.
 
 ## Project Structure
 
@@ -63,8 +58,7 @@ packages/strudel-bridge   # Browser bridge to Strudel runtime/editor
 packages/strudel-adapter  # Adapter hooks into Strudel tab/theme/reference/sounds
 packages/shared-types     # Shared contracts
 packages/storage-local    # localStorage settings persistence
-strudel/                  # upstream Strudel submodule
-patches/strudel/          # local overlay patches for submodule integration
+strudel/                  # tracked Strudel source (editable in-repo)
 tools/                    # scripts and CI checks
 ```
 
@@ -83,7 +77,7 @@ pnpm run build:strudel    # build strudel website
 pnpm run build:all        # build both
 pnpm run typecheck
 pnpm run test
-pnpm run ci               # boundary + secrets + typecheck + tests
+pnpm run ci               # secrets + typecheck + tests
 ```
 
 ## Deployment (Static-First)
@@ -110,7 +104,6 @@ See `docs/DEPLOYMENT.md` for full deployment steps and production smoke checklis
 CI workflow: `.github/workflows/ci.yml`
 
 Checks include:
-- submodule boundary guard
 - secret scan guard
 - dev/fake boundary doc guard
 - prompt placeholder guard
@@ -135,21 +128,6 @@ Production default is same-origin `/chatrave-agent/agent-tab.js`.
 - Agent dev server may be on another port; check `tools/run-dev.sh` output.
 - Set `chatraveAgentModuleUrl` to the printed agent-web URL + `/src/index.ts`.
 
-### Submodule missing
-
-```bash
-git submodule update --init --recursive
-```
-
-### Overlay patch apply failure
-
-- Re-sync submodule and retry:
-
-```bash
-git submodule update --init --recursive --remote
-bash tools/apply-strudel-patches.sh
-```
-
 ## Documentation Index
 
 - `AGENTS.md`
@@ -164,9 +142,9 @@ bash tools/apply-strudel-patches.sh
 
 - Keep files small and modular under `apps/` and `packages/`.
 - Do not place agent business logic inside `strudel/`.
-- For Strudel integration tweaks, update patch overlays under `patches/strudel/`.
+- For Strudel integration tweaks, edit tracked source under `strudel/website/`.
 - Run `pnpm run ci` before opening PRs.
 
 ## License
 
-Project license currently follows repository policy. Upstream Strudel submodule license is in `strudel/LICENSE`.
+Project license currently follows repository policy. Strudel source license is in `strudel/LICENSE`.

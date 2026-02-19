@@ -7,10 +7,6 @@ STRUDEL_LOG="${ROOT_DIR}/.strudel.dev.log"
 ALIAS_LOG="${ROOT_DIR}/.agent-alias.dev.log"
 ALIAS_PORT="${CHATRAVE_AGENT_ALIAS_PORT:-4175}"
 
-if [[ -x "${ROOT_DIR}/tools/apply-strudel-patches.sh" ]]; then
-  "${ROOT_DIR}/tools/apply-strudel-patches.sh"
-fi
-
 cleanup() {
   if [[ -n "${ALIAS_PID:-}" ]] && kill -0 "${ALIAS_PID}" 2>/dev/null; then
     kill "${ALIAS_PID}" 2>/dev/null || true

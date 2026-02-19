@@ -35,6 +35,8 @@ Thumbs.db
 # Strudel specific
 .strudel/sessions/
 .strudel/cache/
+strudel/doc.json
+strudel/website/public/chatrave-agent/
 coverage/
 
 

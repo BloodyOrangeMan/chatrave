@@ -1,19 +1,19 @@
-# Strudel Patch Policy (Public Repo)
+# Strudel Source Policy
 
-Strudel is kept as an upstream git submodule.
-We do not commit direct feature changes under `strudel/**` from this repository.
+Strudel is tracked directly in this repository under `strudel/`.
+We do not use a submodule + patch overlay model anymore.
 
 ## Customization Model
-- Store customizations as patch files under `patches/strudel/*.patch`.
-- Apply them locally via `tools/apply-strudel-patches.sh`.
-- Keep patch scope minimal and integration-only.
+- Edit Strudel integration points directly in `strudel/website/...`.
+- Keep scope focused on Chatrave integration (panel host/loading, build/runtime wiring).
+- Keep agent business logic in `apps/` and `packages/`, not inside Strudel sources.
 
-## Current Overlay Scope
-- `website/src/repl/components/panel/Panel.jsx`:
-  - make `agent` the visible panel tab,
-  - host/load the agent UI module,
-  - keep Strudel runtime logic outside submodule.
+## Current Integration Scope
+- `strudel/website/src/repl/components/panel/Panel.jsx`
+  - agent tab host and module bootstrap
+  - production-safe same-origin loading
+  - localhost fallbacks for local dev only
 
 ## Disallowed
-- adding agent runtime, networking, or business logic inside `strudel/`
-- broad refactors unrelated to panel integration
+- broad Strudel refactors unrelated to integration
+- moving tool orchestration/business logic into Strudel runtime
