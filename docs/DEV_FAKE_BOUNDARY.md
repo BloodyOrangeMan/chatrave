@@ -13,8 +13,7 @@ Track what is production runtime vs dev-only behavior after the AI SDK clean-sla
 | Agent UI | `apps/agent-web/src/index.ts` | `mixed` | Production chat UI + dev controls surface. |
 | Runtime overrides | `apps/agent-web/src/runtime-overrides.ts` | `dev-only` | LocalStorage toggle for mock mode/scenario. |
 | Worker/client wiring | `apps/agent-web/src/worker-client.ts` | `mixed` | Production runtime plus dev mock switch wiring. |
-| Dev bootstrap script | `tools/run-dev.sh` | `dev-only` | Starts Strudel, agent-web and alias process. |
-| Agent URL alias utility | `tools/agent-port-alias.mjs` | `dev-only` | Local port alias for host/browser convenience. |
+| Dev bootstrap script | `tools/run-dev.sh` | `dev-only` | Builds/stages agent bundle, then starts Strudel on a single public dev port. |
 
 ## Removed Deprecated Components (2026-02-15)
 - `packages/jam-core/**`

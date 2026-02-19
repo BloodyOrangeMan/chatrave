@@ -27,9 +27,8 @@ pnpm run dev
 ```
 
 `pnpm run dev` starts:
-- `@chatrave/agent-web` dev server
 - Strudel dev server (`strudel/`)
-- local alias proxy for agent module URL compatibility
+- same-origin staged agent bundle (`/chatrave-agent/agent-tab.js`)
 
 ## Mock LLM Mode
 
@@ -114,19 +113,8 @@ Checks include:
 ### Agent tab not loading
 
 - Ensure `pnpm run dev` is running.
-- In browser console:
-
-```js
-localStorage.setItem('chatraveAgentModuleUrl', 'http://localhost:4175/src/index.ts');
-location.reload();
-```
-
-Production default is same-origin `/chatrave-agent/agent-tab.js`.
-
-### `http://localhost:4175/src/index.ts` refused
-
-- Agent dev server may be on another port; check `tools/run-dev.sh` output.
-- Set `chatraveAgentModuleUrl` to the printed agent-web URL + `/src/index.ts`.
+- Agent now loads from same-origin `/chatrave-agent/agent-tab.js` in both dev and production.
+- If agent code changed, rerun `pnpm run dev` to rebuild and stage the bundle.
 
 ## Documentation Index
 

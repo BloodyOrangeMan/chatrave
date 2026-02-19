@@ -67,7 +67,7 @@ it means `strudel/doc.json` was not generated in the build environment. `build:s
 
 Production agent loading behavior:
 - tries same-origin module first: `/chatrave-agent/agent-tab.js`
-- falls back to local dev URLs only if same-origin is unavailable.
+- no localhost fallback URLs in production or dev runtime.
 
 ## Static Hosting
 

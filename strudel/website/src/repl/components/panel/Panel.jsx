@@ -292,51 +292,18 @@ function AgentTabHost({ context }) {
         return;
       }
 
-      const isLocalOrigin = /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname);
-      const preferred = window.localStorage.getItem('chatraveAgentModuleUrl');
-      const preferredUrl = preferred ? (() => {
-        try {
-          return new URL(preferred, window.location.origin);
-        } catch {
-          return null;
+      const moduleUrl = `${window.location.origin}/chatrave-agent/agent-tab.js`;
+      try {
+        // eslint-disable-next-line no-eval
+        await import(/* @vite-ignore */ moduleUrl);
+        window.__CHATRAVE_INIT_AGENT_TAB__?.();
+        if (!canceled && renderIntoHost()) {
+          return;
         }
-      })() : null;
-      const isPreferredLocalhost = preferredUrl
-        ? /^(localhost|127\.0\.0\.1)$/i.test(preferredUrl.hostname)
-        : false;
-      const safePreferred = !preferred
-        ? null
-        : !isLocalOrigin && isPreferredLocalhost
-          ? null
-          : preferred;
-
-      const fallbackModuleUrls = isLocalOrigin
-        ? [
-            `${window.location.origin}/chatrave-agent/agent-tab.js`,
-            'http://localhost:4174/src/index.ts',
-            'http://localhost:4175/src/index.ts',
-          ]
-        : [`${window.location.origin}/chatrave-agent/agent-tab.js`];
-      const moduleUrls = preferred
-        ? [safePreferred, ...fallbackModuleUrls.filter((url) => url !== safePreferred)].filter(Boolean)
-        : fallbackModuleUrls;
-
-      for (const moduleUrl of moduleUrls) {
-        try {
-          // eslint-disable-next-line no-eval
-          await import(/* @vite-ignore */ moduleUrl);
-          window.__CHATRAVE_INIT_AGENT_TAB__?.();
-          if (!canceled && renderIntoHost()) {
-            window.localStorage.setItem('chatraveAgentModuleUrl', moduleUrl);
-            return;
-          }
-        } catch (error) {
-          if (moduleUrl === moduleUrls[moduleUrls.length - 1] && !canceled) {
-            setStatus('error');
-            setBootError(
-              `Failed to load agent module from tried URLs (${moduleUrls.join(', ')}). Last error: ${String(error)}`,
-            );
-          }
+      } catch (error) {
+        if (!canceled) {
+          setStatus('error');
+          setBootError(`Failed to load agent module from ${moduleUrl}. Last error: ${String(error)}`);
         }
       }
     };
@@ -358,8 +325,7 @@ function AgentTabHost({ context }) {
           <div>Booting agent tab...</div>
           {status === 'error' && <div className="mt-2 text-red-500">{bootError}</div>}
           <div className="mt-2">
-            Tip: run <code>pnpm --filter @chatrave/agent-web dev</code> and set{' '}
-            <code>localStorage.chatraveAgentModuleUrl</code> if needed.
+            Tip: run <code>pnpm run dev</code> from the repo root to build and serve agent assets.
           </div>
         </div>
       )}
