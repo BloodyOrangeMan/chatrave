@@ -43,7 +43,7 @@ From repo root:
 ```bash
 pnpm run build:agent-web   # builds stable agent module (agent-tab.js)
 pnpm run stage:agent-web   # copies agent dist into strudel public assets
-pnpm run build:strudel     # applies overlays + builds agent + stages + builds strudel
+pnpm run build:strudel     # applies overlays + builds agent + stages + generates doc.json + builds strudel
 pnpm run build:all         # alias of build:strudel
 ```
 
@@ -63,6 +63,12 @@ This repo is configured for a single Vercel project serving Strudel at `/`.
 5. Install command: `git submodule sync --recursive && git submodule update --init --recursive --depth 1 && pnpm install && pnpm -C strudel install`
 
 If Vercel UI shows submodule fetch warnings, keep this install command exactly as above so deploy retries submodule init during install.
+
+If you see an error like:
+
+`Could not resolve "../../../doc.json" from "src/docs/JsDoc.jsx"`
+
+it means `strudel/doc.json` was not generated in the build environment. `build:strudel` now runs `pnpm -C strudel jsdoc-json` before website build to prevent this.
 
 `vercel.json` already contains these defaults.
 
